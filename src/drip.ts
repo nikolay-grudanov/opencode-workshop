@@ -12,7 +12,7 @@ export type DripItemId = "hat" | "umbrella" | "sticker";
 interface DripItem {
   id: DripItemId;
   label: string;
-  remaining: number;
+  remaining: number | null;
   matrix?: readonly string[];
   displayWidth?: number;
   displayHeight?: number;
@@ -22,6 +22,7 @@ interface DripItem {
 const h = React.createElement;
 const GITHUB_REPO = "invisible-tools/raindrop-workshop";
 const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
+const DEFAULT_DRIP_ITEMS_URL = "https://www.raindrop.ai/api/drip-items";
 const DEFAULT_DRIP_CLAIM_URL = "https://www.raindrop.ai/api/drip-claims";
 const CARD_WIDTH = 46;
 const CARD_HEIGHT = 24;
@@ -131,7 +132,7 @@ const ITEMS: DripItem[] = [
   {
     id: "sticker",
     label: "sticker",
-    remaining: 500,
+    remaining: null,
   },
 ];
 
@@ -142,10 +143,10 @@ USAGE
     raindrop drip
 
 WHAT IT DOES
-    Opens an Ink-powered terminal picker with the first drops:
-      field cap   200 remaining
-      umbrella     50 remaining
-      sticker     500 remaining
+    Opens an Ink-powered terminal picker with live availability:
+      field cap   loaded from Raindrop
+      umbrella    loaded from Raindrop
+      sticker     unlimited
 
     After you choose an item, the CLI asks for your email and submits a claim
     while supplies last. Shipping details are collected separately.
@@ -155,6 +156,7 @@ OPTIONS
     --email EMAIL Submit a claim without an interactive email prompt.
 
 ENVIRONMENT
+    RAINDROP_DRIP_ITEMS_URL Override the item availability endpoint for testing.
     RAINDROP_DRIP_CLAIM_URL Override the claim endpoint for testing.
 `);
 }
@@ -267,6 +269,56 @@ function normalizeEmailArg(emailArg?: string): string | null | undefined {
 
 function coerceItemId(value: unknown): DripItemId | undefined {
   return value === "hat" || value === "umbrella" || value === "sticker" ? value : undefined;
+}
+
+function coerceRemaining(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  return undefined;
+}
+
+function mergeDripItems(remoteItems: unknown): DripItem[] {
+  if (!Array.isArray(remoteItems)) return ITEMS;
+
+  const remoteById = new Map<DripItemId, { label?: unknown; remaining?: unknown; active?: unknown }>();
+  for (const rawItem of remoteItems) {
+    if (!rawItem || typeof rawItem !== "object") continue;
+    const remote = rawItem as { id?: unknown; label?: unknown; remaining?: unknown; active?: unknown };
+    const id = coerceItemId(remote.id);
+    if (id) remoteById.set(id, remote);
+  }
+
+  const merged = ITEMS.flatMap((item): DripItem[] => {
+    const remote = remoteById.get(item.id);
+    if (!remote || remote.active === false) return [];
+    const remaining = coerceRemaining(remote.remaining);
+    return [{
+      ...item,
+      label: typeof remote.label === "string" && remote.label.trim() ? remote.label : item.label,
+      remaining: remaining === undefined ? item.remaining : remaining,
+    }];
+  });
+
+  return merged.length > 0 ? merged : ITEMS;
+}
+
+async function loadDripItems(): Promise<DripItem[]> {
+  const url = process.env.RAINDROP_DRIP_ITEMS_URL ?? DEFAULT_DRIP_ITEMS_URL;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        "user-agent": `raindrop-cli/${VERSION}`,
+      },
+    });
+    if (!response.ok) return ITEMS;
+
+    const raw = await response.json().catch(() => null) as { items?: unknown } | null;
+    return mergeDripItems(raw?.items);
+  } catch {
+    return ITEMS;
+  }
 }
 
 async function submitDripClaim(input: {
@@ -406,17 +458,23 @@ function abort(): number {
   return 130;
 }
 
-function StaticFallback(): React.ReactElement {
+function StaticFallback({ items }: { items: DripItem[] }): React.ReactElement {
+  const selectedItem = items[0]?.id ?? "hat";
   return h(
     Box,
     { flexDirection: "column", gap: 1 },
     h(Text, { color: "cyanBright", bold: true }, "raindrop drip"),
-    h(Box, { gap: 2 }, ...ITEMS.filter((item) => item.matrix).map((item) => h(ItemCard, {
+    h(Box, { gap: 2 }, ...items.filter((item) => item.matrix).map((item) => h(ItemCard, {
       key: item.id,
       item,
-      selected: item.id === "hat",
+      selected: item.id === selectedItem,
     }))),
-    h(StickerOption, { selected: false, frame: 0 }),
+    ...items.filter((item) => !item.matrix).map((item) => h(StickerOption, {
+      key: item.id,
+      item,
+      selected: item.id === selectedItem,
+      frame: 0,
+    })),
   );
 }
 
@@ -428,10 +486,12 @@ interface DripSelection {
 
 function DripApp({
   emailArg,
+  items,
   onDone,
   onCancel,
 }: {
   emailArg?: string;
+  items: DripItem[];
   onDone: (selection: DripSelection) => void;
   onCancel: () => void;
 }): React.ReactElement {
@@ -463,8 +523,8 @@ function DripApp({
       onCancel();
       app.exit();
     } else if (step === "item") {
-      if (key.leftArrow || input === "h") setSelected((current: number) => (current + ITEMS.length - 1) % ITEMS.length);
-      else if (key.rightArrow || input === "l") setSelected((current: number) => (current + 1) % ITEMS.length);
+      if (key.leftArrow || input === "h") setSelected((current: number) => (current + items.length - 1) % items.length);
+      else if (key.rightArrow || input === "l") setSelected((current: number) => (current + 1) % items.length);
       else if (key.return) setStep("star");
     } else if (step === "star") {
       if (!starPromptArmed) return;
@@ -473,7 +533,7 @@ function DripApp({
       }
       else if (key.return) {
         if (emailArg) {
-          onDone({ item: ITEMS[selected].id, starMethod, email: emailArg });
+          onDone({ item: items[selected].id, starMethod, email: emailArg });
           app.exit();
         } else {
           setStep("email");
@@ -487,7 +547,7 @@ function DripApp({
         } else if (!isValidEmail(trimmed)) {
           setEmailError("Enter a valid email");
         } else {
-          onDone({ item: ITEMS[selected].id, starMethod, email: trimmed });
+          onDone({ item: items[selected].id, starMethod, email: trimmed });
           app.exit();
         }
       } else if (key.backspace || key.delete) {
@@ -500,7 +560,7 @@ function DripApp({
     }
   });
 
-  const item = ITEMS[selected];
+  const item = items[selected];
 
   return h(
     Box,
@@ -514,12 +574,17 @@ function DripApp({
     h(
       Box,
       { gap: 2 },
-      ...ITEMS.filter((item) => item.matrix).map((item) => h(ItemCard, {
+      ...items.filter((item) => item.matrix).map((item) => h(ItemCard, {
         key: item.id,
         item,
-        selected: ITEMS[selected].id === item.id,
+        selected: items[selected].id === item.id,
       })),
-      h(StickerOption, { selected: ITEMS[selected].id === "sticker", frame }),
+      ...items.filter((item) => !item.matrix).map((item) => h(StickerOption, {
+        key: item.id,
+        item,
+        selected: items[selected].id === item.id,
+        frame,
+      })),
     ),
     h(
       Text,
@@ -577,7 +642,7 @@ function StarPrompt({
     Box,
     { flexDirection: "column", marginTop: 1 },
     h(Text, null, `${item.label} selected`),
-    h(Text, null, `${item.remaining} remaining before backend reservations`),
+    h(Text, null, item.remaining === null ? "available while supplies last" : `${item.remaining} remaining before backend reservations`),
     h(Box, { height: 1 }),
     h(Text, null, "Liking Workshop? Star us on GitHub."),
     h(
@@ -590,7 +655,11 @@ function StarPrompt({
   );
 }
 
-function StickerOption({ selected, frame }: { selected: boolean; frame: number }): React.ReactElement {
+function remainingBadge(item: DripItem): string {
+  return item.remaining === null ? "∞" : `${item.remaining} left`;
+}
+
+function StickerOption({ item, selected, frame }: { item: DripItem; selected: boolean; frame: number }): React.ReactElement {
   return h(
     Box,
     {
@@ -605,8 +674,8 @@ function StickerOption({ selected, frame }: { selected: boolean; frame: number }
     h(
       Box,
       { justifyContent: "space-between", width: "100%" },
-      h(Text, { color: selected ? "whiteBright" : "gray", bold: selected }, `${selected ? "> " : "  "}sticker`),
-      h(Text, { color: selected ? "green" : "gray", bold: selected }, "∞"),
+      h(Text, { color: selected ? "whiteBright" : "gray", bold: selected }, `${selected ? "> " : "  "}${item.label}`),
+      h(Text, { color: selected ? "green" : "gray", bold: selected }, remainingBadge(item)),
     ),
     h(RainField, { frame }),
     selected && h(Text, { color: "whiteBright" }, "enter to claim"),
@@ -704,7 +773,7 @@ function ItemCard({
       h(
         Box,
         { flexShrink: 0 },
-        h(Text, { color: selected ? "green" : "gray", bold: selected, wrap: "truncate" }, `${item.remaining} left`),
+        h(Text, { color: selected ? "green" : "gray", bold: selected, wrap: "truncate" }, remainingBadge(item)),
       ),
     ),
     h(Box, { height: 2 }),
@@ -930,14 +999,16 @@ function sourceTone(shade: string): number {
 }
 
 async function chooseDripItem(emailArg?: string): Promise<DripSelection | null> {
+  const items = await loadDripItems();
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    render(h(StaticFallback));
-    return { item: "hat", starMethod: "browser", email: emailArg };
+    render(h(StaticFallback, { items }));
+    return { item: items[0]?.id ?? "hat", starMethod: "browser", email: emailArg };
   }
 
   let result: DripSelection | null = null;
   const instance = render(h(DripApp, {
     emailArg,
+    items,
     onDone: (selection: DripSelection) => {
       result = selection;
     },
@@ -953,8 +1024,8 @@ async function chooseDripItem(emailArg?: string): Promise<DripSelection | null> 
 export function renderDripStore(): string {
   return `raindrop drip
 
-baseball cap  200 left
-umbrella       50 left`;
+field cap  live count
+umbrella   live count`;
 }
 
 export async function cmdDrip(args: string[]): Promise<number> {
