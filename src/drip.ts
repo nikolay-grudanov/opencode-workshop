@@ -1,0 +1,643 @@
+import { spawn } from "child_process";
+import React, { useEffect, useState } from "react";
+import { Box, Text, render, useApp, useInput } from "ink";
+import {
+  cancel,
+  outro,
+} from "@clack/prompts";
+
+export type DripItemId = "hat" | "umbrella" | "sticker";
+
+interface DripItem {
+  id: DripItemId;
+  label: string;
+  remaining: number;
+  matrix?: readonly string[];
+  displayWidth?: number;
+  displayHeight?: number;
+}
+
+const h = React.createElement;
+const GITHUB_REPO = "invisible-tools/raindrop-workshop";
+const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
+const CARD_WIDTH = 46;
+const CARD_HEIGHT = 24;
+const STICKER_BOX_HEIGHT = CARD_HEIGHT;
+const STICKER_RAIN_HEIGHT = 19;
+const STAR_PROMPT_ARM_MS = 250;
+
+const SHADE_SYMBOLS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_~";
+const MIN_VISIBLE_SOURCE_TONE = 2;
+
+const UMBRELLA_MATRIX = [
+  "               sY",
+  "             VVWSQNO",
+  "          XacafZXVMONMI",
+  "        UdmggYURRQNOMMKLI",
+  "       bjqrgcXTSQQOOMNNMJF",
+  "      XiqqibYURSPQMOMKKIKFD",
+  "     bjrtmeYVTSQOPONLMJJIEEA",
+  "    VhqqjdZVUSPPOOLNKKKHJFDBB",
+  "   TeqplfdZUSPQRNOMMLMIJIECAB",
+  "   WorkhfcYVRSRQOOOPLMKILFCBAC",
+  "  bgnkffdaYTTQRPPPLOKLKHKEEABB9",
+  "  ajmjegdcXSSQRPOONOLMKIJFEABB9",
+  " SdkjgdeecYTSQQQOONNKKJIIGDABB95",
+  " TchedcfdcVSUPRNKPMOKKHHGDC9BB84",
+  " XaXRTRYfbWSPM 15 AMKIGF43349A73",
+  "WSF     NXVL   44   JJB      2AA",
+  "Y         T    79    H         B",
+  "               FD",
+  "               MK",
+  "               NM",
+  "               NN",
+  "               PK",
+  "               PL",
+  "               QM",
+  "               pP",
+  "               SN",
+  "               QP",
+  "               OK",
+  "               NE   BQ",
+  "               MF   EV",
+  "               NMB CPO",
+  "                KSSPN",
+  "                 CKM",
+] as const;
+
+const CAP_MATRIX = [
+  "                                  QQN",
+  "                                 KMGBG",
+  "                            cgefdRICCA865",
+  "                         XceeffYSLGBB7E4459",
+  "                       ZdeeeeXNOJHDC785E32375",
+  "                      afefeWQLLGGGC69464D211586",
+  "                    UdhgeZQNLJHHFCC968355D0202AA",
+  "                   VcffcSOLKFHFDBB9784523B3 1 19A8",
+  "                  OdfeZRNJJGGDDCC996542316A    1889",
+  "                 ScgfYROIIGGDDD9A9A4453203C      899",
+  "                 YeeZQPJIHFCEDAC885733312178     08A",
+  "                XafaSOJKFHEDCAB8967352211175      28B",
+  "                YdcTPLKEFEECAC8A764533111 38       89",
+  "               UdcWQNIHEDDCBA9A6765332111128       2A7",
+  "               YcYRKIGFDCBAA995754422210  17        77",
+  "               ZdQOJHFDF9C99877445342010 018        3A8",
+  "              UdXPKGEDDAB8A696563432 21  1 9         88",
+  "              aaVLIDFCCC7A78567352302      7         4A",
+  "              cdPNEFDDB89876673523120 1   16         49",
+  "              bYQIGCCAAA877653523212 1 0  07         39",
+  "             TbZKIDCBA9A5855562323211 1    9         3A",
+  "             UbSLED8989674846343212 00    16         28",
+  "             ZZRHEAA98774645324122010 1    8         48",
+  "            VWYVTSPQQPJ666634514201000   0 6         1A",
+  "          RYbZTLJFGECBDHHGGD83512221  0   16         39",
+  "         adcbSKGEBB8876553449EBDA72 1     85         49",
+  "       bbfZRLHDBBC8687552331112018BBA11   7         288",
+  "     cdgcUOKGDAAA6744632312110 1     978858        255",
+  "   YdeeUNJIGC997874653320300  0          68      3557",
+  "  ZcbYPMIIEAC9867553322 201    0          12",
+  " bedbaVWTOBB786664432202 0  1            24",
+  "MNIFBACADFOLMB6444321110                25",
+  "I3     83  BBJL97331110              1034",
+  "3             7HI923200             1 54",
+  "                4EF3211 1          218",
+  "                  3ED602 1    0  2359",
+  "                    9BC520 011 3499",
+  "                      6CCABA88CAA",
+  "                         6899966",
+] as const;
+
+const ITEMS: DripItem[] = [
+  {
+    id: "hat",
+    label: "raindrop field cap",
+    remaining: 200,
+    matrix: CAP_MATRIX,
+    displayWidth: 25,
+    displayHeight: 13,
+  },
+  {
+    id: "umbrella",
+    label: "raindrop umbrella",
+    remaining: 50,
+    matrix: UMBRELLA_MATRIX,
+    displayWidth: 25,
+    displayHeight: 15,
+  },
+  {
+    id: "sticker",
+    label: "sticker",
+    remaining: 500,
+  },
+];
+
+function printHelp(): void {
+  console.log(`raindrop drip - choose Raindrop merch
+
+USAGE
+    raindrop drip
+
+WHAT IT DOES
+    Opens an Ink-powered terminal picker with the first drops:
+      field cap   200 remaining
+      umbrella     50 remaining
+      sticker     500 remaining
+
+    This first pass is UI-only. Backend reservation and shipping form wiring
+    will be added separately.
+
+OPTIONS
+    -h, --help    Print this help.
+`);
+}
+
+function openInBrowser(url: string): void {
+  let cmd: string;
+  let args: string[];
+  if (process.platform === "darwin") {
+    cmd = "open";
+    args = [url];
+  } else if (process.platform === "win32") {
+    cmd = "cmd";
+    args = ["/c", "start", "", url];
+  } else {
+    cmd = "xdg-open";
+    args = [url];
+  }
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+      // The printed URL still gives users a manual path if opening fails.
+    });
+    child.unref();
+  } catch {
+    // The printed URL still gives users a manual path if opening fails.
+  }
+}
+
+interface GhStarResult {
+  ok: boolean;
+  reason?: string;
+}
+
+async function starWithGh(): Promise<GhStarResult> {
+  return new Promise((resolve) => {
+    const child = spawn("gh", ["api", "-X", "PUT", `/user/starred/${GITHUB_REPO}`], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const output: Buffer[] = [];
+    child.stdout?.on("data", (chunk) => output.push(Buffer.from(chunk)));
+    child.stderr?.on("data", (chunk) => output.push(Buffer.from(chunk)));
+    child.on("error", (err) => resolve({ ok: false, reason: err.message }));
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      const message = Buffer.concat(output).toString("utf8").trim();
+      resolve({
+        ok: false,
+        reason: message || `gh exited with code ${code ?? "unknown"}`,
+      });
+    });
+  });
+}
+
+function isDevMode(): boolean {
+  const execName = process.execPath.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  return !execName.startsWith("raindrop");
+}
+
+function abort(): number {
+  cancel("Drip cancelled.");
+  return 130;
+}
+
+function StaticFallback(): React.ReactElement {
+  return h(
+    Box,
+    { flexDirection: "column", gap: 1 },
+    h(Text, { color: "cyanBright", bold: true }, "raindrop drip"),
+    h(Box, { gap: 2 }, ...ITEMS.filter((item) => item.matrix).map((item) => h(ItemCard, {
+      key: item.id,
+      item,
+      selected: item.id === "hat",
+    }))),
+    h(StickerOption, { selected: false, frame: 0 }),
+  );
+}
+
+interface DripSelection {
+  item: DripItemId;
+  starMethod: "api" | "browser";
+}
+
+function DripApp({
+  onDone,
+  onCancel,
+}: {
+  onDone: (selection: DripSelection) => void;
+  onCancel: () => void;
+}): React.ReactElement {
+  const app = useApp();
+  const [selected, setSelected] = useState(0);
+  const [step, setStep] = useState<"item" | "star">("item");
+  const [starMethod, setStarMethod] = useState<"api" | "browser">("api");
+  const [starPromptArmed, setStarPromptArmed] = useState(false);
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame((value) => value + 1), 120);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (step !== "star") {
+      setStarPromptArmed(false);
+      return;
+    }
+    const timer = setTimeout(() => setStarPromptArmed(true), STAR_PROMPT_ARM_MS);
+    return () => clearTimeout(timer);
+  }, [step]);
+
+  useInput((input, key) => {
+    if (key.escape || key.ctrl || input === "q") {
+      onCancel();
+      app.exit();
+    } else if (step === "item") {
+      if (key.leftArrow || input === "h") setSelected((current) => (current + ITEMS.length - 1) % ITEMS.length);
+      else if (key.rightArrow || input === "l") setSelected((current) => (current + 1) % ITEMS.length);
+      else if (key.return) setStep("star");
+    } else if (step === "star") {
+      if (!starPromptArmed) return;
+      if (key.leftArrow || input === "h" || key.rightArrow || input === "l") {
+        setStarMethod((current) => current === "api" ? "browser" : "api");
+      }
+      else if (key.return) {
+        onDone({ item: ITEMS[selected].id, starMethod });
+        app.exit();
+      }
+    }
+  });
+
+  const item = ITEMS[selected];
+
+  return h(
+    Box,
+    { flexDirection: "column", paddingX: 1, paddingY: 1, gap: 1 },
+    h(
+      Box,
+      { flexDirection: "column" },
+      h(Text, { color: "cyanBright", bold: true }, "raindrop drip"),
+      h(Text, { color: "gray" }, "choose your drop"),
+    ),
+    h(
+      Box,
+      { gap: 2 },
+      ...ITEMS.filter((item) => item.matrix).map((item) => h(ItemCard, {
+        key: item.id,
+        item,
+        selected: ITEMS[selected].id === item.id,
+      })),
+      h(StickerOption, { selected: ITEMS[selected].id === "sticker", frame }),
+    ),
+    h(
+      Text,
+      { color: "gray" },
+      h(Text, null, "use "),
+      h(Text, { color: "whiteBright" }, "<-"),
+      h(Text, null, " / "),
+      h(Text, { color: "whiteBright" }, "->"),
+      h(Text, null, " to move, "),
+      h(Text, { color: "whiteBright" }, "enter"),
+      h(Text, null, " to choose, "),
+      h(Text, { color: "whiteBright" }, "q"),
+      h(Text, null, " to quit"),
+    ),
+    step === "star" && h(StarPrompt, { item, starMethod }),
+  );
+}
+
+function StarPrompt({
+  item,
+  starMethod,
+}: {
+  item: DripItem;
+  starMethod: "api" | "browser";
+}): React.ReactElement {
+  const useApi = starMethod === "api";
+  return h(
+    Box,
+    { flexDirection: "column", marginTop: 1 },
+    h(Text, null, `${item.label} selected`),
+    h(Text, null, `${item.remaining} remaining before backend reservations`),
+    h(Box, { height: 1 }),
+    h(Text, null, "Liking Workshop? Star us on GitHub."),
+    h(
+      Text,
+      null,
+      h(Text, { color: useApi ? "green" : "gray" }, `${useApi ? "●" : "○"} Yes (via API)`),
+      h(Text, { color: "gray" }, " / "),
+      h(Text, { color: useApi ? "gray" : "green" }, `${useApi ? "○" : "●"} Open Browser`),
+    ),
+  );
+}
+
+function StickerOption({ selected, frame }: { selected: boolean; frame: number }): React.ReactElement {
+  return h(
+    Box,
+    {
+      borderStyle: "round",
+      borderColor: selected ? "whiteBright" : "gray",
+      flexDirection: "column",
+      width: 24,
+      height: STICKER_BOX_HEIGHT,
+      paddingX: 2,
+      paddingY: 1,
+    },
+    h(
+      Box,
+      { justifyContent: "space-between", width: "100%" },
+      h(Text, { color: selected ? "whiteBright" : "gray", bold: selected }, `${selected ? "> " : "  "}sticker`),
+      h(Text, { color: selected ? "green" : "gray", bold: selected }, "∞"),
+    ),
+    h(RainField, { frame }),
+    selected && h(Text, { color: "whiteBright" }, "enter to claim"),
+  );
+}
+
+function RainField({ frame }: { frame: number }): React.ReactElement {
+  const width = 18;
+  const height = STICKER_RAIN_HEIGHT;
+  const layers = [
+    { columns: [1, 7, 14], speed: 0.55, length: 2, tones: ["#252b30", "#465159"], glyphs: ["·", "˙"], offset: 1 },
+    { columns: [3, 10, 16], speed: 0.9, length: 3, tones: ["#303840", "#6f7b84", "#aeb8be"], glyphs: ["·", "┆", "│"], offset: 5 },
+    { columns: [5, 12], speed: 1.35, length: 4, tones: ["#3d464d", "#7f8b93", "#c5cdd2", "#f3f6f7"], glyphs: ["·", "┆", "│", "╽"], offset: 9 },
+    { columns: [8], speed: 1.9, length: 5, tones: ["#2b3238", "#59646c", "#919da4", "#d8dee2", "#ffffff"], glyphs: ["·", "┆", "│", "╽", "╿"], offset: 13 },
+  ];
+
+  return h(
+    Box,
+    { flexDirection: "column" },
+    ...Array.from({ length: height }, (_, row) => h(
+      Box,
+      { key: row, width },
+      ...Array.from({ length: width }, (_, col) => {
+        const drop = rainCell(layers, frame, row, col, height);
+        const mist = !drop && isMist(frame, row, col);
+        return h(Text, {
+          key: col,
+          color: drop?.tone ?? (mist ? "#252b30" : "black"),
+        }, drop?.glyph ?? (mist ? "·" : " "));
+      }),
+    )),
+  );
+}
+
+function rainCell(
+  layers: Array<{ columns: number[]; speed: number; length: number; tones: string[]; glyphs: string[]; offset: number }>,
+  frame: number,
+  row: number,
+  col: number,
+  height: number,
+): { tone: string; glyph: string } | null {
+  for (const layer of layers) {
+    for (const rainCol of layer.columns) {
+      const drift = Math.sin((frame + rainCol * 3) * 0.17) > 0.75 ? 1 : 0;
+      const head = (Math.floor(frame * layer.speed) + layer.offset + rainCol * 2) % (height + layer.length + 3);
+      const localCol = rainCol + drift;
+      const age = head - row;
+      if (col === localCol && age >= 0 && age < layer.length) {
+        const index = layer.length - 1 - age;
+        return {
+          tone: layer.tones[Math.min(index, layer.tones.length - 1)],
+          glyph: layer.glyphs[Math.min(index, layer.glyphs.length - 1)],
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function isMist(frame: number, row: number, col: number): boolean {
+  return ((row * 17 + col * 31 + Math.floor(frame / 3) * 7) % 97) === 0;
+}
+
+function ItemCard({
+  item,
+  selected,
+}: {
+  item: DripItem;
+  selected: boolean;
+}): React.ReactElement {
+  const borderColor = selected ? "whiteBright" : "gray";
+  const titleColor = selected ? "whiteBright" : "gray";
+  const displayMatrix = resampleMatrix(item.matrix!, item.displayWidth!, item.displayHeight!);
+
+  return h(
+    Box,
+    {
+      borderStyle: "round",
+      borderColor,
+      flexDirection: "column",
+      width: CARD_WIDTH,
+      height: CARD_HEIGHT,
+      paddingX: 2,
+      paddingY: 1,
+    },
+    h(
+      Box,
+      { justifyContent: "space-between", width: "100%" },
+      h(
+        Box,
+        { flexGrow: 1, marginRight: 1 },
+        h(Text, { color: titleColor, bold: selected, wrap: "truncate-end" }, `${selected ? "> " : "  "}${item.label}`),
+      ),
+      h(
+        Box,
+        { flexShrink: 0 },
+        h(Text, { color: selected ? "green" : "gray", bold: selected, wrap: "truncate" }, `${item.remaining} left`),
+      ),
+    ),
+    h(Box, { height: 2 }),
+    h(DotMatrixArt, { matrix: displayMatrix }),
+    h(Box, { flexGrow: 1 }),
+    h(Text, { color: selected ? "whiteBright" : "gray" }, selected ? "enter to claim" : "              "),
+  );
+}
+
+function DotMatrixArt({ matrix }: { matrix: readonly string[] }): React.ReactElement {
+  const width = matrixWidth(matrix);
+  return h(
+    Box,
+    { flexDirection: "column", alignItems: "center", width: "100%" },
+    ...matrix.map((row, rowIndex) => h(
+      Box,
+      { key: rowIndex, width, justifyContent: "center" },
+      ...dotSegments(row.padEnd(width), rowIndex),
+    )),
+  );
+}
+
+function dotSegments(row: string, rowIndex: number): React.ReactElement[] {
+  const segments: React.ReactElement[] = [];
+  let col = 0;
+  while (col < row.length) {
+    const cell = dotCellForShade(row[col]);
+    let end = col + 1;
+    while (end < row.length && sameDotCell(cell, dotCellForShade(row[end]))) end++;
+    segments.push(h(Text, {
+      key: `${rowIndex}-${col}`,
+      color: cell.color,
+    }, cell.char.repeat(end - col)));
+    col = end;
+  }
+  return segments;
+}
+
+function matrixWidth(matrix: readonly string[]): number {
+  return Math.max(...matrix.map((row) => row.length));
+}
+
+function dotCellForShade(shade: string): { char: string; color: string } {
+  const value = decodeTone(shade);
+  if (value <= 0) return { char: " ", color: "black" };
+  const t = (value - 1) / 63;
+  const curved = Math.pow(t, 1.05);
+  if (curved < 0.28) return { char: "▪", color: "#4f565c" };
+  if (curved < 0.72) return { char: "▪", color: "#8b949b" };
+  return { char: "▪", color: "#d9e0e4" };
+}
+
+function sameDotCell(a: { char: string; color: string }, b: { char: string; color: string }): boolean {
+  return a.char === b.char && a.color === b.color;
+}
+
+function encodeTone(value: number): string {
+  const clamped = Math.max(1, Math.min(64, Math.round(value)));
+  return SHADE_SYMBOLS[clamped - 1];
+}
+
+function decodeTone(shade: string): number {
+  const index = SHADE_SYMBOLS.indexOf(shade);
+  return index === -1 ? 0 : index + 1;
+}
+
+function resampleMatrix(matrix: readonly string[], targetWidth: number, targetHeight: number): string[] {
+  const sourceWidth = matrixWidth(matrix);
+  const sourceHeight = matrix.length;
+  const padded = matrix.map((row) => row.padEnd(sourceWidth));
+  const rows: string[] = [];
+
+  for (let y = 0; y < targetHeight; y++) {
+    let row = "";
+    const y0 = Math.floor((y / targetHeight) * sourceHeight);
+    const y1 = Math.max(y0 + 1, Math.ceil(((y + 1) / targetHeight) * sourceHeight));
+
+    for (let x = 0; x < targetWidth; x++) {
+      const x0 = Math.floor((x / targetWidth) * sourceWidth);
+      const x1 = Math.max(x0 + 1, Math.ceil(((x + 1) / targetWidth) * sourceWidth));
+      let sum = 0;
+      let lit = 0;
+      let max = 0;
+      let min = 64;
+      let total = 0;
+
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          total++;
+          const value = sourceTone(padded[sy]?.[sx] ?? " ");
+          if (value > 0) {
+            sum += value;
+            lit++;
+            max = Math.max(max, value);
+            min = Math.min(min, value);
+          }
+        }
+      }
+
+      if (lit === 0) {
+        row += " ";
+      } else {
+        const average = sum / lit;
+        const coverage = lit / total;
+        const sourceContrast = max >= 58
+          ? max
+          : max >= 46 || min <= 12
+            ? average * 0.55 + max * 0.45
+            : average;
+        const detailFloor = coverage < 0.28 && max <= 18 ? MIN_VISIBLE_SOURCE_TONE : 0;
+        row += encodeTone(Math.max(detailFloor || MIN_VISIBLE_SOURCE_TONE, sourceContrast));
+      }
+    }
+
+    rows.push(row.replace(/\s+$/g, ""));
+  }
+
+  return rows;
+}
+
+function sourceTone(shade: string): number {
+  return decodeTone(shade);
+}
+
+async function chooseDripItem(): Promise<DripSelection | null> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    render(h(StaticFallback));
+    return { item: "hat", starMethod: "browser" };
+  }
+
+  let result: DripSelection | null = null;
+  const instance = render(h(DripApp, {
+    onDone: (selection: DripSelection) => {
+      result = selection;
+    },
+    onCancel: () => {
+      result = null;
+    },
+  }));
+
+  await instance.waitUntilExit();
+  return result;
+}
+
+export function renderDripStore(): string {
+  return `raindrop drip
+
+baseball cap  200 left
+umbrella       50 left`;
+}
+
+export async function cmdDrip(args: string[]): Promise<number> {
+  for (const arg of args) {
+    if (arg === "--help" || arg === "-h") {
+      printHelp();
+      return 0;
+    }
+    console.error(`unknown flag: ${arg}`);
+    return 64;
+  }
+
+  const selection = await chooseDripItem();
+  if (!selection) return abort();
+
+  if (selection.starMethod === "api") {
+    const starred = await starWithGh();
+    if (starred.ok) {
+      console.log(`Starred ${GITHUB_REPO} via API.`);
+    } else {
+      if (isDevMode()) {
+        console.log(`gh repo star failed: ${starred.reason}`);
+        console.log("Opening GitHub in the browser instead.");
+      }
+      openInBrowser(GITHUB_URL);
+      console.log(`Opened ${GITHUB_URL}`);
+    }
+  } else {
+    openInBrowser(GITHUB_URL);
+    console.log(`Opened ${GITHUB_URL}`);
+  }
+
+  outro("Next: name, email, signup preference, and shipping info.");
+  return 0;
+}
