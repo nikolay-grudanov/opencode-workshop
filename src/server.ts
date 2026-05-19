@@ -443,6 +443,10 @@ export async function createServer(port: number) {
   });
 
   const INGEST_PATHS = new Set([
+    "/v1/traces",
+    "/v1/otel/v1/traces",
+    "/otel/v1/traces",
+    "/v1/live",
     "/v1/events/track",
     "/v1/events/track_partial",
     "/v1/users/identify",
