@@ -1,56 +1,56 @@
 {
   "min_supported": "0.0.0",
   "stable": {
-    "version": "0.1.8",
+    "version": "0.1.9",
     "platforms": {
       "darwin-arm64": {
-        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-darwin-arm64",
-        "sha256": "de5bc9d29ffe9621253400518a820d78466566a92e26b6b6f88504de094adaf7",
+        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-darwin-arm64",
+        "sha256": "7734c05d3d181807b29100ef387eda76970f933258306cf36616a044f4e91348",
         "size": 68025376,
         "gzip": {
-          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-darwin-arm64.gz",
-          "sha256": "d20534b1ada0412e0c7a2925cbdbaec323ea56110875459dfd75c8cefeb84bc2",
-          "size": 26287030
+          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-darwin-arm64.gz",
+          "sha256": "25e420f7a09c427672f7b334aa7b563154683d62c100f7efdf238aa68c123d39",
+          "size": 26283165
         }
       },
       "darwin-x64": {
-        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-darwin-x64",
-        "sha256": "49c2fa9a9ea26791e3a4ecffbe7f4a3240a292f15877fb1003228bcbc74bde63",
+        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-darwin-x64",
+        "sha256": "a14ec12258cf852c2af424a7cbb15c26d79633e6e1baf87b698d65435ce973e1",
         "size": 73226128,
         "gzip": {
-          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-darwin-x64.gz",
-          "sha256": "066352a5a4f3df1cf53f96a590ad1869ecd4877baf237c2bb763fe31db26f1be",
-          "size": 28665100
+          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-darwin-x64.gz",
+          "sha256": "4542d4af21fea42b3657edbc054ca08aa749d98044453dfc9bad242b1fe75200",
+          "size": 28662168
         }
       },
       "linux-x64": {
-        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-linux-x64",
-        "sha256": "77c8a87210a3ba9dad6f734019a44f4c4024e5f17a70a18ba6d27a80c670a520",
+        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-linux-x64",
+        "sha256": "18861c2d6b0fd8086b0864f368b73092af5196bc7bcbc07e69e1219b667caaa6",
         "size": 106740032,
         "gzip": {
-          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-linux-x64.gz",
-          "sha256": "413dced8eb0228aa414c9b64e8b9a4a2d7b7189dce8cd903b1b64b6cf08a73ba",
-          "size": 42189790
+          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-linux-x64.gz",
+          "sha256": "c468c44cad9129cdf8c17e0ba1fa72da3e3a6ca4d9dfde6580566ecde836685a",
+          "size": 42186724
         }
       },
       "linux-arm64": {
-        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-linux-arm64",
-        "sha256": "0d0054946d9c1b3482cd84c3707d4ad82942c7dc56562a9ba6d6f1df62b44bd5",
+        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-linux-arm64",
+        "sha256": "2d667111dae67fadd0335ab835dfa3b2b3895b970bef12fff302a7cd46eb8950",
         "size": 106301760,
         "gzip": {
-          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-linux-arm64.gz",
-          "sha256": "8ec5b392c590b28d6aa90bf5b2c1891a0320793ef6ab5f8f2249574ed7e7ee88",
-          "size": 41897316
+          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-linux-arm64.gz",
+          "sha256": "71420b17aa0731cbc6150fa5086a3bfe2a6a9b33181ef42b68d997a631bc5c44",
+          "size": 41894105
         }
       },
       "windows-x64": {
-        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-windows-x64.exe",
-        "sha256": "d93285b90371bab7c498c2193b0d3603defb45e890c952a741e90190eac4ed83",
-        "size": 122569728,
+        "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-windows-x64.exe",
+        "sha256": "a0cbcf5a63aab3ca5677fd95902c0d7d079bb7d1ad982e6d7d9e90b84dab0c52",
+        "size": 122566144,
         "gzip": {
-          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.8/raindrop-bun-windows-x64.exe.gz",
-          "sha256": "acb3c8346d523364f7aa84685be2da3a38fb2ffe592182db769e1c6cef519d9d",
-          "size": 45099462
+          "url": "https://github.com/raindrop-ai/workshop/releases/download/v0.1.9/raindrop-bun-windows-x64.exe.gz",
+          "sha256": "2adcceccfb42e31adbb63d921955e6a5db3fa708e04a2f9369e7489afb3bbc48",
+          "size": 45096528
         }
       }
     }
