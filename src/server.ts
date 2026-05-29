@@ -121,6 +121,17 @@ function isAllowedLocalAccess(hostHeader: string | string[] | undefined, originH
   }
 }
 
+function allowedIngestCorsOrigin(originHeader: string | string[] | undefined): string | null {
+  const origin = firstHeader(originHeader);
+  if (!origin) return null;
+  try {
+    const u = new URL(origin);
+    return isAllowedLocalHostname(u.hostname) || u.protocol === "chrome-extension:" ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
 const DEMO_CHAT_MODEL = process.env.RAINDROP_DEMO_CHAT_MODEL ?? "gpt-5.5-nano";
 
 type DemoChatMessage = {
@@ -511,7 +522,12 @@ export async function createServer(port: number) {
   app.use(
     [...INGEST_PATHS],
     (req, res, next) => {
-      res.setHeader("Access-Control-Allow-Origin", "*");
+      const origin = firstHeader(req.headers.origin);
+      const corsOrigin = allowedIngestCorsOrigin(req.headers.origin);
+      if (!isAllowedLocalAccess(req.headers.host, undefined) || (origin && !corsOrigin)) {
+        return res.status(403).json({ error: "forbidden" });
+      }
+      if (corsOrigin) res.setHeader("Access-Control-Allow-Origin", corsOrigin);
       res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       if (req.method === "OPTIONS") return res.sendStatus(204);

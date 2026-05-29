@@ -18,6 +18,10 @@ import { looksLikeJson } from "./helpers";
  * If a future SDK version starts emitting structured prompts, this adapter
  * naturally stops matching (because `ai.prompt` will start parsing as JSON
  * and the AI SDK adapter will claim those spans first).
+ *
+ * The system prompt rides on a sibling `ai.prompt.system` string attribute
+ * (the SDK can't fold it into the raw-string `ai.prompt`), so we read it
+ * separately rather than parsing it out of the prompt.
  */
 export const claudeAgentSdkLlmAdapter: SpanAdapter = {
   name: "claude-agent-sdk-llm",
@@ -34,6 +38,9 @@ export const claudeAgentSdkLlmAdapter: SpanAdapter = {
     const model = (input.attrs["ai.response.model"] as string | undefined)
       ?? (input.attrs["ai.model.id"] as string | undefined);
 
+    const systemPromptRaw = input.attrs["ai.prompt.system"];
+    const systemPrompt = typeof systemPromptRaw === "string" ? systemPromptRaw : "";
+
     const outputPayload = (input.attrs["ai.response.text"] as string | undefined)
       ?? (input.attrs["ai.response.object"] as string | undefined);
 
@@ -44,7 +51,7 @@ export const claudeAgentSdkLlmAdapter: SpanAdapter = {
         kind: "llm",
         messages: [{ role: "user", content: prompt }],
         userMessage: prompt,
-        systemPrompt: "",
+        systemPrompt,
         model,
       },
     };

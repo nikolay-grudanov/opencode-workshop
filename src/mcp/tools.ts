@@ -26,7 +26,7 @@ const TOOLS = [
       type: "object",
       required: ["sql"],
       properties: {
-        sql: { type: "string", description: "A single SELECT or WITH ... SELECT statement." },
+        sql: { type: "string", description: "A single SELECT statement. CTEs are not allowed." },
         limit: { type: "number", description: "Max rows returned, default 100, max 1000." },
         max_bytes: { type: "number", description: "Max serialized response bytes, default 120000, max 1000000." },
       },
