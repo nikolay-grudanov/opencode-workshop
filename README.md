@@ -46,61 +46,6 @@ That's it. Traces stream into the UI the moment your agent runs.
 - **Local replay.** `/setup-agent-replay` scaffolds an HTTP endpoint that replays a
   production trace against your real agent code.
 
-## Raindrop Cloud
-
-Workshop is the local debugger. **Raindrop Cloud** is the hosted product:
-production observability for your AI features at
-[app.raindrop.ai](https://app.raindrop.ai). The same `raindrop` binary connects
-your project to it, with no local daemon involved.
-
-Connect a project to the cloud:
-
-```bash
-raindrop cloud setup
-```
-
-This signs you in (opening a browser the first time; see `raindrop login`
-below), writes your org's `RAINDROP_WRITE_KEY` to `./.env`, and installs the
-hosted MCP server plus the cloud skills (`raindrop-setup`,
-`raindrop-investigate`) into your AI coding agents. Then run `/raindrop-setup`
-inside your agent to instrument your app, and events stream to
-[app.raindrop.ai](https://app.raindrop.ai).
-
-Sign-in is handled separately and reused across projects:
-
-```bash
-raindrop login    # OAuth sign-in; caches credentials in ~/.raindrop
-raindrop logout   # clear stored credentials
-```
-
-`raindrop cloud setup` calls `login` for you only when you are not already
-signed in, so day-to-day you just run `cloud setup`.
-
-When you run `raindrop setup` interactively, it also offers to set up Raindrop
-Cloud as an optional last step. Decline to stay Workshop-only, or accept to sign
-in and connect the project. Non-interactive runs (CI, piped scripts) never
-prompt; use `raindrop cloud setup` or the `--cloud` one-liner for those.
-
-To undo a cloud install, run `raindrop cloud uninstall`. It removes the hosted
-MCP server and the cloud skills from your agents and clears the cloud install
-registry, leaving your local Workshop install untouched. Add `--wipe` to also
-remove `RAINDROP_WRITE_KEY` from `./.env`.
-
-### One-line cloud install
-
-The install one-liner takes a `--cloud` flag that connects the project to
-Raindrop Cloud instead of starting the local daemon:
-
-```bash
-curl -fsSL https://raindrop.sh/install | bash -s -- --cloud
-```
-
-Without `--cloud` the installer runs `raindrop setup` and the local Workshop
-daemon (the default above). With `--cloud` it runs `raindrop cloud setup` and
-starts no daemon. Local Workshop and Raindrop Cloud coexist: they use distinct
-MCP server names (`workshop` vs `raindrop`) and separate install registries, so
-neither overwrites the other.
-
 ## Compatible with everything
 
 - **Languages:** TypeScript, Python, Go, Rust
@@ -126,11 +71,6 @@ raindrop workshop setup    # write .env, then start and open
 raindrop workshop status   # check health
 raindrop workshop reset    # delete local DB after confirmation
 raindrop update            # update the binary
-
-raindrop login             # sign in to Raindrop cloud (OAuth)
-raindrop logout            # clear stored credentials
-raindrop cloud setup       # connect this project to Raindrop cloud (no daemon)
-raindrop cloud uninstall   # remove the cloud MCP + skills from your agents
 ```
 
 ## Build from source (contributors only)
