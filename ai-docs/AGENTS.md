@@ -87,6 +87,11 @@ Smoke test procedure:
 | Current plan / todos | [`PLAN.md`](PLAN.md) |
 | Last session snapshot | [`HANDOFF.md`](HANDOFF.md) |
 | Upstream build/dev guide | [`../AGENTS.md`](../AGENTS.md) |
+| Module map, data flow, fork boundary | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| HTTP + WebSocket surface, error shapes | [`API.md`](API.md) |
+| SQLite schema, migrations, ops recipes | [`DATABASE.md`](DATABASE.md) |
+| OTLP ingest contract, span shape, env vars | [`PLUGIN-CONTRACT.md`](PLUGIN-CONTRACT.md) |
+| Dev env, scripts, smoke test, lint/typecheck | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
 | Span normalization | `src/spans/normalize.ts` |
 | Sub-agent detection | `src/agents.ts` |
 | Replay logic | `src/replay.ts` |
