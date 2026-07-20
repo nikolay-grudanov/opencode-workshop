@@ -43,7 +43,6 @@ import { cmdUninstall } from "./uninstall";
 import { stopWorkshopStartup } from "./workshop-startup";
 import { registerReplayProject } from "./agents-config";
 import { openInBrowser } from "./open-browser";
-import { cmdLogin, cmdLogout } from "./auth/login";
 
 // Umbrella state dir is `~/.raindrop/`. Workshop-specific state lives at
 // the top of it for now (single product); we'd nest further if/when a
@@ -651,15 +650,6 @@ function printRootHelp(): void {
                                   (drops MCP + skill files in their config dirs).
       raindrop replay register    Register this project's replay config.
 
-  Raindrop cloud:
-
-      raindrop cloud setup        Connect this project to Raindrop cloud:
-                                  sign in, write the write key to ./.env, and
-                                  install the cloud skills + hosted MCP.
-      raindrop login              Sign in to Raindrop cloud (OAuth) + grab
-                                  your org write key.
-      raindrop logout             Clear stored Raindrop credentials.
-
   Day-to-day:
 
       raindrop workshop           Start daemon + open UI (idempotent).
@@ -817,14 +807,6 @@ async function dispatchWorkshop(verb: string | undefined, rest: string[]): Promi
       // Claude Code. Distinct from `raindrop workshop setup`, which is
       // the per-project (.env + daemon + open UI) bootstrap.
       process.exit(await cmdSetup(process.argv.slice(3)));
-      break;
-    case "login":
-      // Sign in to Raindrop cloud (OAuth) + grab the org write key. Reuses
-      // valid stored credentials without reopening the browser.
-      process.exit(await cmdLogin(process.argv.slice(3)));
-      break;
-    case "logout":
-      process.exit(await cmdLogout(process.argv.slice(3)));
       break;
     case "sync":
       // Refresh skill files + MCP entries in every place we previously
