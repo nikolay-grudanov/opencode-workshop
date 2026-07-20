@@ -826,14 +826,6 @@ async function dispatchWorkshop(verb: string | undefined, rest: string[]): Promi
     case "logout":
       process.exit(await cmdLogout(process.argv.slice(3)));
       break;
-    case "cloud": {
-      // Raindrop cloud: sign in, write the write key to ./.env, and install
-      // the cloud skills + hosted HTTP MCP into AI coding agents. No daemon —
-      // distinct from `raindrop workshop` (local debugger).
-      const { dispatchCloud } = await import("./cloud/setup");
-      process.exit(await dispatchCloud(process.argv[3], process.argv.slice(4)));
-      break;
-    }
     case "sync":
       // Refresh skill files + MCP entries in every place we previously
       // installed (per ~/.raindrop/install-registry.json). Auto-runs at

@@ -3,9 +3,6 @@ import type { Readable } from "stream";
 import {
   agentAnnotationSource,
   chatChildEnv,
-  hasCloudMcpConfigured,
-  localCloudMcpProxyUrl,
-  QUERY_API_KEY_TOKEN_ENV,
   resolveWorkshopMcpCommand,
   workshopSidepanelPrompt,
   type AgentLoadout,
@@ -106,9 +103,6 @@ export function buildMcpConfig(
     RAINDROP_WORKSHOP_AGENT_PROVIDER: "claude",
     RAINDROP_WORKSHOP_ANNOTATION_SOURCE: agentAnnotationSource("claude"),
   };
-  if (queryApiKeyToken?.trim()) {
-    workshopEnv.RAINDROP_WORKSHOP_QUERY_API_KEY_TOKEN = queryApiKeyToken.trim();
-  }
   const mcpServers: Record<string, Record<string, unknown>> = {
     raindrop_workshop: {
       command: mcpCommand.command,
@@ -116,20 +110,6 @@ export function buildMcpConfig(
       env: workshopEnv,
     },
   };
-
-  if (hasCloudMcpConfigured(queryApiKey, queryApiKeyToken)) {
-    // Point at the daemon's local proxy and authenticate with the transient
-    // per-spawn token. The agent process never has the real Raindrop Query
-    // API key in its environment; the daemon resolves the token to the key
-    // server-side before forwarding upstream.
-    mcpServers.raindrop_cloud = {
-      type: "http",
-      url: localCloudMcpProxyUrl(backendUrl),
-      headers: {
-        Authorization: `Bearer \${${QUERY_API_KEY_TOKEN_ENV}}`,
-      },
-    };
-  }
 
   return { mcpServers };
 }
@@ -193,8 +173,6 @@ function directReplySystemPrompt(input: ClaudeCliChatInput): string {
     provider: "claude",
     localMcpName: "raindrop_workshop",
     runId: input.runId,
-    queryApiKey: input.queryApiKey,
-    queryApiKeyToken: input.queryApiKeyToken,
   });
 }
 

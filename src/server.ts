@@ -24,10 +24,8 @@ import { runCodexCliChat } from "./codex-cli-chat";
 import {
   agentAnnotationSource,
   agentProviderLabel,
-  cloudMcpUrl,
   defaultAgentLoadout,
   getAgentProvider,
-  hasCloudMcpConfigured,
   parseAgentProvider,
   setAgentProvider,
   type AgentProviderId,
@@ -47,11 +45,6 @@ import {
   parseAskUserQuestionHookInput,
 } from "./claude-ask-user-question";
 import { createViewingRegistry } from "./viewing-registry";
-import { importCloudTrace, ImportCloudTraceRefused } from "./cloud/import-trace";
-import { QueryApiError, queryApiGet } from "./cloud/query-client";
-import { normalizeQueryApiKey } from "./cloud/query-key";
-import { TransientQueryApiKeyStore } from "./cloud/transient-keys";
-import { CLOUD_MCP_PROXY_PATH, bearerTokenFromHeader, createCloudMcpProxy } from "./cloud/cloud-mcp-proxy";
 import { createLocalOriginGuard, parseAllowedOriginsEnv } from "./local-origin-guard";
 import { isLoopbackRemoteAddress } from "./local-access";
 import {
@@ -439,7 +432,6 @@ export async function createServer(port: number) {
   let anthropicModelsCache: { expiresAt: number; models: string[] } | null = null;
   const claudeCliChatEnabled =
     port !== 0 && process.env.RAINDROP_WORKSHOP_CLAUDE_CLI_CHAT !== "0";
-  const transientQueryApiKeys = new TransientQueryApiKeyStore();
   const localOriginGuard = createLocalOriginGuard({
     extraAllowedOrigins: parseAllowedOriginsEnv(process.env.RAINDROP_WORKSHOP_ALLOWED_ORIGINS),
   });
@@ -447,47 +439,6 @@ export async function createServer(port: number) {
   function backendUrl(): string {
     const addr = server.address() as AddressInfo | null;
     return `http://127.0.0.1:${addr?.port ?? port}`;
-  }
-
-  function createTransientQueryApiKeyToken(queryApiKey: string): string | null {
-    return transientQueryApiKeys.issue(queryApiKey);
-  }
-
-  /**
-   * Resolve the upstream cloud key used to talk to mcp.raindrop.ai /
-   * query.raindrop.ai *from this daemon*. The daemon's env var wins;
-   * otherwise a validated browser-provided key (header/body) is used.
-   * Returns null when no cloud key is available at all.
-   */
-  function resolveUpstreamCloudKey(
-    req: express.Request,
-    body: Record<string, unknown>,
-  ): string | null {
-    const daemonKey = getEffectiveSecret("query");
-    if (daemonKey) return daemonKey;
-    return resolveRequestQueryApiKey(req, body);
-  }
-
-  /**
-   * Resolve the Raindrop Query API key for a request.
-   *
-   * The daemon's own `RAINDROP_QUERY_API_KEY` env var always wins: if the
-   * operator has configured one, we never trust an attacker-controlled value
-   * piped through the browser. Otherwise we accept a validated key from the
-   * Authorization header first, then the JSON body, then an MCP-child
-   * transient token. Returning null means "defer to process.env".
-   */
-  function resolveRequestQueryApiKey(
-    req: express.Request,
-    body: Record<string, unknown>,
-  ): string | null {
-    if (getEffectiveSecret("query")) return null;
-    const headerKey = normalizeQueryApiKey(bearerTokenFromHeader(req.header("authorization")));
-    if (headerKey) return headerKey;
-    const direct = normalizeQueryApiKey(body.query_api_key);
-    if (direct) return direct;
-    const token = typeof body.query_api_key_token === "string" ? body.query_api_key_token.trim() : "";
-    return token ? transientQueryApiKeys.resolve(token) : null;
   }
 
   function hasConnectedUi(): boolean {
@@ -557,19 +508,6 @@ export async function createServer(port: number) {
     }
     const workspace = activeWorkspaceOrError(res);
     return workspace?.cwd ?? null;
-  }
-
-  function cloudImportError(res: express.Response, err: unknown): void {
-    if (err instanceof ImportCloudTraceRefused) {
-      const status = err.reason === "no_spans" ? 404 : 413;
-      res.status(status).json({ error: err.message, code: err.reason, observed: err.observed, limit: err.limit });
-      return;
-    }
-    if (err instanceof QueryApiError) {
-      res.status(err.status === 401 || err.status === 403 ? 502 : err.status).json({ error: err.message });
-      return;
-    }
-    res.status(500).json({ error: (err as Error).message ?? "Failed to import cloud trace" });
   }
 
   function rememberClaudeLoadout(event: unknown) {
@@ -683,17 +621,6 @@ export async function createServer(port: number) {
     }
     next();
   });
-
-  // Mount the cloud MCP proxy before express.json so it can stream the raw
-  // request body (small JSON-RPC envelopes) and, more importantly, the raw
-  // response (Server-Sent Event chunks) without buffering.
-  app.use(
-    CLOUD_MCP_PROXY_PATH,
-    createCloudMcpProxy({
-      upstreamUrl: () => cloudMcpUrl(),
-      resolveBearer: (token) => transientQueryApiKeys.resolve(token),
-    }),
-  );
 
 
   app.use(express.json({ limit: "50mb" }));
@@ -1054,10 +981,6 @@ export async function createServer(port: number) {
       res.json({ key, status: getSecretStatus(key) });
       return;
     }
-    if (key === "query" && !normalizeQueryApiKey(value)) {
-      res.status(400).json({ error: "Query API key must be printable ASCII, 16-512 characters, with no whitespace." });
-      return;
-    }
     setStoredSecret(key, value);
     broadcast("secrets_updated", { key, status: getSecretStatus(key) });
     res.json({ key, status: getSecretStatus(key) });
@@ -1072,47 +995,6 @@ export async function createServer(port: number) {
     deleteStoredSecret(key);
     broadcast("secrets_updated", { key, status: getSecretStatus(key) });
     res.json({ key, status: getSecretStatus(key) });
-  });
-
-  function queryProxyParams(req: express.Request): Record<string, string> {
-    const url = new URL(req.originalUrl, "http://127.0.0.1");
-    const params: Record<string, string> = {};
-    for (const [key, value] of url.searchParams.entries()) {
-      if (value) params[key] = value;
-    }
-    return params;
-  }
-
-  async function sendQueryApiProxy(
-    req: express.Request,
-    res: express.Response,
-    path: string,
-    defaults?: Record<string, string | number>,
-  ): Promise<void> {
-    try {
-      const params = { ...defaults, ...queryProxyParams(req) };
-      const body = await queryApiGet(path, params, getEffectiveSecret("query"));
-      res.json(body);
-    } catch (err) {
-      if (err instanceof QueryApiError) {
-        res.status(err.status).json({ error: err.message });
-        return;
-      }
-      res.status(500).json({ error: (err as Error).message || "Query API request failed" });
-    }
-  }
-
-  app.get("/api/query/signals", localOriginGuard, (req, res) => {
-    void sendQueryApiProxy(req, res, "/v1/signals", { limit: 100 });
-  });
-  app.get("/api/query/events/search", localOriginGuard, (req, res) => {
-    void sendQueryApiProxy(req, res, "/v1/events/search");
-  });
-  app.get("/api/query/events", localOriginGuard, (req, res) => {
-    void sendQueryApiProxy(req, res, "/v1/events");
-  });
-  app.get("/api/query/traces", localOriginGuard, (req, res) => {
-    void sendQueryApiProxy(req, res, "/v1/traces", { limit: 500 });
   });
 
   app.post("/api/agent-ui/commands", (req, res) => {
@@ -1145,31 +1027,6 @@ export async function createServer(port: number) {
     }
     broadcast("agent_ui_command", command);
     res.json({ ok: true, command });
-  });
-  app.post("/api/cloud/traces/import", localOriginGuard, async (req, res) => {
-    const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
-    const eventId = typeof body.event_id === "string" ? body.event_id.trim() : "";
-    if (!eventId) {
-      res.status(400).json({ error: "event_id required" });
-      return;
-    }
-
-    const openInUi = body.open_in_ui === true;
-    try {
-      const result = await importCloudTrace(eventId, resolveUpstreamCloudKey(req, body));
-      broadcast("spans", { runIds: [result.run_id], count: result.span_count });
-      if (openInUi) {
-        broadcast("agent_ui_command", { type: "navigate_to_run", run_id: result.run_id });
-      }
-      res.json({
-        ...result,
-        navigation_requested: openInUi,
-        ui_connected: hasConnectedUi(),
-        next_tools: ["get_run_outline", "search_run", "get_span_payload", "annotate", "show_in_ui"],
-      });
-    } catch (err) {
-      cloudImportError(res, err);
-    }
   });
   app.get("/api/spans/:id", (req, res) => {
     const row = getSpanMeta(req.params.id) as any;
@@ -1506,9 +1363,6 @@ export async function createServer(port: number) {
     const clientMessageId = typeof client_message_id === "string" && client_message_id
       ? client_message_id
       : randomUUID();
-    const requestQueryApiKey = resolveRequestQueryApiKey(req, body);
-    const upstreamCloudKey = resolveUpstreamCloudKey(req, body);
-    const queryApiKeyToken = upstreamCloudKey ? createTransientQueryApiKeyToken(upstreamCloudKey) : null;
     let text = "";
     let errorText = "";
     const events: unknown[] = [];
@@ -1529,8 +1383,6 @@ export async function createServer(port: number) {
         cwd,
         runId: typeof run_id === "string" ? run_id : null,
         resumeSessionId: providerSessionId,
-        queryApiKey: requestQueryApiKey,
-        queryApiKeyToken,
       };
       const result = requestProvider === "codex"
         ? await runCodexCliChat(chatInput, {
@@ -1599,8 +1451,6 @@ export async function createServer(port: number) {
         session_id: providerSessionId,
         events,
       });
-    } finally {
-      transientQueryApiKeys.release(queryApiKeyToken);
     }
   });
 
@@ -1678,9 +1528,6 @@ export async function createServer(port: number) {
     const clientMessageId = typeof client_message_id === "string" && client_message_id
       ? client_message_id
       : randomUUID();
-    const requestQueryApiKey = resolveRequestQueryApiKey(req, body);
-    const upstreamCloudKey = resolveUpstreamCloudKey(req, body);
-    const queryApiKeyToken = upstreamCloudKey ? createTransientQueryApiKeyToken(upstreamCloudKey) : null;
     let text = "";
     let errorText = "";
     const events: unknown[] = [];
@@ -1699,8 +1546,6 @@ export async function createServer(port: number) {
           cwd,
           runId: typeof run_id === "string" ? run_id : null,
           resumeSessionId: claudeSessionId,
-          queryApiKey: requestQueryApiKey,
-          queryApiKeyToken,
         },
         {
           onEvent(event) {
@@ -1746,8 +1591,6 @@ export async function createServer(port: number) {
         session_id: claudeSessionId,
         events,
       });
-    } finally {
-      transientQueryApiKeys.release(queryApiKeyToken);
     }
   });
 
@@ -1766,11 +1609,6 @@ export async function createServer(port: number) {
       codex: {
         mode: "codex_exec_stream",
         state: "green",
-      },
-      cloud_mcp: {
-        configured: hasCloudMcpConfigured(getEffectiveSecret("query")),
-        env_var: getSecretStatus("query").env_var,
-        source: getSecretStatus("query").source,
       },
     });
   });

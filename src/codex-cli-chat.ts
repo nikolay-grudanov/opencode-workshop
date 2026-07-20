@@ -4,9 +4,6 @@ import {
   agentAnnotationSource,
   chatChildEnv,
   defaultAgentLoadout,
-  hasCloudMcpConfigured,
-  localCloudMcpProxyUrl,
-  QUERY_API_KEY_TOKEN_ENV,
   resolveWorkshopMcpCommand,
   workshopSidepanelPrompt,
   type AgentCliChatHandlers,
@@ -26,7 +23,7 @@ export function runCodexCliChat(
 ): Promise<CodexCliChatResult> {
   const child = spawn(process.env.RAINDROP_WORKSHOP_CODEX_BIN ?? "codex", buildCodexArgs(input), {
     cwd: input.cwd,
-    env: chatChildEnv(input.queryApiKeyToken),
+    env: chatChildEnv(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (input.abortSignal) {
@@ -43,9 +40,6 @@ export function buildCodexArgs(input: CodexCliChatInput): string[] {
     `RAINDROP_WORKSHOP_AGENT_PROVIDER="codex"`,
     `RAINDROP_WORKSHOP_ANNOTATION_SOURCE=${JSON.stringify(agentAnnotationSource("codex"))}`,
   ];
-  if (input.queryApiKeyToken?.trim()) {
-    workshopEnv.push(`RAINDROP_WORKSHOP_QUERY_API_KEY_TOKEN=${JSON.stringify(input.queryApiKeyToken.trim())}`);
-  }
   const commonArgs = [
     "-C",
     input.cwd,
@@ -56,18 +50,6 @@ export function buildCodexArgs(input: CodexCliChatInput): string[] {
     "-c",
     `mcp_servers.workshop.env={${workshopEnv.join(",")}}`,
   ];
-  if (hasCloudMcpConfigured(input.queryApiKey, input.queryApiKeyToken)) {
-    // Point at the daemon's local proxy and authenticate via the transient
-    // per-spawn token env var. The Codex process never has the real Raindrop
-    // Query API key in its environment; the daemon resolves the token to the
-    // key server-side before forwarding upstream.
-    commonArgs.push(
-      "-c",
-      `mcp_servers.raindrop_cloud.url=${JSON.stringify(localCloudMcpProxyUrl(input.backendUrl))}`,
-      "-c",
-      `mcp_servers.raindrop_cloud.bearer_token_env_var=${JSON.stringify(QUERY_API_KEY_TOKEN_ENV)}`,
-    );
-  }
   if (process.env.RAINDROP_WORKSHOP_CODEX_BYPASS_PERMISSIONS !== "0") {
     commonArgs.unshift("--dangerously-bypass-approvals-and-sandbox");
   } else {
@@ -92,8 +74,6 @@ function directReplySystemPrompt(input: CodexCliChatInput): string {
     provider: "codex",
     localMcpName: "workshop",
     runId: input.runId,
-    queryApiKey: input.queryApiKey,
-    queryApiKeyToken: input.queryApiKeyToken,
   });
 }
 
