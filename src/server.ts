@@ -18,9 +18,7 @@ import { discoverReplayAgents, loadAgentsConfig, saveAgentsConfig, extractContex
 import { resolveBuiltAppDir } from "./ui-assets";
 import { setReplayTrace } from "./replay-map";
 import { getClaudeSession, getLatestClaudeLoadout, listClaudeSessions, type ClaudeLoadout } from "./claude-sessions";
-import { getCodexSession, listCodexSessions } from "./codex-sessions";
 import { runClaudeCliChat } from "./claude-cli-chat";
-import { runCodexCliChat } from "./codex-cli-chat";
 import {
   agentAnnotationSource,
   agentProviderLabel,
@@ -532,7 +530,6 @@ export async function createServer(port: number) {
   }
 
   function currentLoadout(cwd: string) {
-    if (agentProvider === "codex") return defaultAgentLoadout("codex");
     if (!latestClaudeLoadout) {
       latestClaudeLoadout = getLatestClaudeLoadout(cwd);
     }
@@ -1294,11 +1291,6 @@ export async function createServer(port: number) {
       res.status(400).json({ error: "provider must be 'claude' or 'codex'" });
       return;
     }
-    const targetProvider = requestedProvider ?? agentProvider;
-    if (targetProvider === "codex") {
-      res.json(listCodexSessions(cwd));
-      return;
-    }
     res.json(listClaudeSessions(cwd));
   });
 
@@ -1311,15 +1303,6 @@ export async function createServer(port: number) {
   app.get("/api/agent/sessions/:id", (req, res) => {
     const cwd = cwdFromRequestOrActive(req, res);
     if (!cwd) return;
-    if (agentProvider === "codex") {
-      const session = getCodexSession(cwd, req.params.id);
-      if (!session) {
-        res.status(404).json({ error: "Codex session not found" });
-        return;
-      }
-      res.json(session);
-      return;
-    }
     const session = getClaudeSession(cwd, req.params.id);
     if (!session) {
       res.status(404).json({ error: "Claude session not found" });
@@ -1351,14 +1334,7 @@ export async function createServer(port: number) {
     // Claude Code owns its resume-token validity. Workshop's JSONL reader can
     // miss a valid Claude session when Claude stores it under a normalized
     // project path or before the file is visible here, so pass --resume through
-    // and let Claude decide. Codex sessions are local Workshop-readable state.
-    if (providerSessionId && requestProvider === "codex") {
-      const existingSession = getCodexSession(cwd, providerSessionId);
-      if (!existingSession) {
-        res.status(404).json({ error: `${agentProviderLabel(requestProvider)} session not found for ${cwd}` });
-        return;
-      }
-    }
+    // and let Claude decide.
     const clientMessageId = typeof client_message_id === "string" && client_message_id
       ? client_message_id
       : randomUUID();
@@ -1383,46 +1359,26 @@ export async function createServer(port: number) {
         runId: typeof run_id === "string" ? run_id : null,
         resumeSessionId: providerSessionId,
       };
-      const result = requestProvider === "codex"
-        ? await runCodexCliChat(chatInput, {
-          onEvent(event) {
-            events.push(event);
-            broadcastStreamEvent(event);
-          },
-          onProviderSession(sessionId) {
-            providerSessionId = sessionId;
-            broadcastStreamEvent({ type: "provider_session", sessionId });
-          },
-          onText(nextContent) {
-            text = nextContent;
-            broadcastStreamEvent({ type: "text", content: nextContent });
-          },
-          onStatus() {},
-          onError(nextContent) {
-            errorText = nextContent;
-            broadcastStreamEvent({ type: "error", content: nextContent });
-          },
-        })
-        : await runClaudeCliChat(chatInput, {
-          onEvent(event) {
-            events.push(event);
-            rememberClaudeLoadout(event);
-            broadcastStreamEvent(event);
-          },
-          onClaudeSession(sessionId) {
-            providerSessionId = sessionId;
-            broadcastStreamEvent({ type: "provider_session", sessionId });
-          },
-          onText(nextContent) {
-            text = nextContent;
-            broadcastStreamEvent({ type: "text", content: nextContent });
-          },
-          onStatus() {},
-          onError(nextContent) {
-            errorText = nextContent;
-            broadcastStreamEvent({ type: "error", content: nextContent });
-          },
-        });
+      const result = await runClaudeCliChat(chatInput, {
+        onEvent(event) {
+          events.push(event);
+          rememberClaudeLoadout(event);
+          broadcastStreamEvent(event);
+        },
+        onClaudeSession(sessionId) {
+          providerSessionId = sessionId;
+          broadcastStreamEvent({ type: "provider_session", sessionId });
+        },
+        onText(nextContent) {
+          text = nextContent;
+          broadcastStreamEvent({ type: "text", content: nextContent });
+        },
+        onStatus() {},
+        onError(nextContent) {
+          errorText = nextContent;
+          broadcastStreamEvent({ type: "error", content: nextContent });
+        },
+      });
       if (result.code !== 0 || errorText) {
         res.status(502).json({
           error: errorText || result.stderr || `${agentProviderLabel(requestProvider)} exited with code ${result.code ?? "unknown"}`,
@@ -1437,11 +1393,7 @@ export async function createServer(port: number) {
         session_id: providerSessionId,
         text,
         events,
-        session: providerSessionId
-          ? requestProvider === "claude"
-            ? getClaudeSession(cwd, providerSessionId)
-            : getCodexSession(cwd, providerSessionId)
-          : null,
+        session: providerSessionId ? getClaudeSession(cwd, providerSessionId) : null,
       });
     } catch (err) {
       res.status(500).json({
@@ -1598,16 +1550,12 @@ export async function createServer(port: number) {
       agent_provider: agentProvider,
       agent: {
         provider: agentProvider,
-        mode: agentProvider === "codex" ? "codex_exec_stream" : "cli_stream",
-        state: agentProvider === "codex" || claudeCliChatEnabled ? "green" : "gray",
+        mode: "cli_stream",
+        state: claudeCliChatEnabled ? "green" : "gray",
       },
       claude_code: {
         mode: "cli_stream",
         state: claudeCliChatEnabled ? "green" : "gray",
-      },
-      codex: {
-        mode: "codex_exec_stream",
-        state: "green",
       },
     });
   });
