@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "active_work_id": null,
+  "works": {
+    "remove-cloud-integration-f001": {
+      "work_id": "remove-cloud-integration-f001",
+      "active_plan": "openspec/changes/remove-cloud-integration-f001/tasks.md",
+      "plan_name": "remove-cloud-integration-f001",
+      "session_ids": [
+        "opencode:ses_07fa2572affewdY2KPIQ4k11IN"
+      ],
+      "status": "completed",
+      "worktree_path": null,
+      "started_at": "2026-07-20T16:30:49.563Z",
+      "ended_at": "2026-07-20T21:52:48.000Z",
+      "elapsed_ms": 19319765
+    }
+  }
+}

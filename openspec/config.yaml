@@ -1,0 +1,32 @@
+schema: spec-driven
+
+context: |
+  Project: Kolya's fork of raindrop-ai/workshop — a LOCAL-ONLY AI agent debugger.
+  - Stack: TypeScript, Bun, Drizzle ORM, SQLite, React + Vite.
+  - Daemon runs on localhost:5899 (HTTP + WebSocket).
+  - Public repo: https://github.com/nikolay-grudanov/opencode-workshop
+  - Upstream: https://github.com/raindrop-ai/workshop (do NOT sync cloud/codex/claude code back).
+
+  Fork conventions (HARD constraints — see ai-docs/AGENTS.md):
+  - Local debugger only. NEVER add app.raindrop.ai, OAuth, paid plans, write-keys, cloud-MCP.
+  - OpenCode-only. NEVER add Codex / Claude Code / Anthropic-specific code.
+  - Docs that belong to the FORK live in ai-docs/. Docs/ at repo root and repo-root AGENTS.md are upstream-owned: do not edit.
+  - Single source of truth for feature work: ai-docs/PLAN.md (F-NNN convention).
+  - One commit per Feature or per Feature-step. Conventional commits. Reference Feature ID in commit body (e.g. "Refs F-001.").
+  - Never git push without explicit user "push" instruction.
+  - Never restart the daemon or OpenCode without explicit OK.
+  - Sub-agent detection: src/agents.ts. Span normalization: src/spans/normalize.ts. Replay: src/replay.ts.
+  - Companion plugin (separate repo): ~/workspase/projects/opencode-workshop-plugin/ — produces spans consumed by this daemon.
+
+rules:
+  proposal:
+    - Cite concrete file paths under "Scope" sections — workers need anchors.
+    - Always include a "Scope OUT" section listing what must NOT be touched (upstream-owned files, other Features, deps that must stay).
+    - Reference ai-docs/PLAN.md F-NNN IDs when the change implements a planned feature.
+  design:
+    - Decisions must be reversible-or-load-bearing tagged with rationale.
+    - Cite ai-docs/HANDOFF.md and ai-docs/AGENTS.md for constraints inherited from upstream/fork.
+  tasks:
+    - One Feature = one commit (Kolya's style). Never bundle multiple Features in a single commit.
+    - Each task must include a verification step (build, lint, smoke test, or grep assertion).
+    - Never include `git push` in tasks — push requires explicit user instruction.
