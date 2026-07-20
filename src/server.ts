@@ -610,10 +610,9 @@ export async function createServer(port: number) {
 
   // Block cross-origin requests to everything except the ingestion routes
   // (handled above). Non-browser callers (MCP stdio, curl, local SDKs) don't
-  // send Origin/Host so they pass through unaffected. Mounted before the
-  // cloud MCP proxy so a hostile browser page can't drive proxied traffic
-  // through the daemon — the legitimate caller (the spawned agent
-  // subprocess) is a Node fetch that sends neither Origin nor a remote Host.
+  // send Origin/Host so they pass through unaffected. The legitimate caller
+  // (the spawned agent subprocess) is a Node fetch that sends neither Origin
+  // nor a remote Host.
   app.use((req, res, next) => {
     if (INGEST_PATHS.has(req.path)) return next();
     if (!isAllowedLocalAccess(req.headers.host, req.headers.origin)) {
@@ -1863,7 +1862,7 @@ export async function createServer(port: number) {
     res.json({ ok: true });
   });
 
-  // Import a cloud run + spans into the local DB so replay can use them
+  // Import a run + spans into the local DB so replay can use them
   app.post("/api/import-run", (req, res) => {
     const { run, spans } = req.body;
     if (!run?.id || !Array.isArray(spans)) {

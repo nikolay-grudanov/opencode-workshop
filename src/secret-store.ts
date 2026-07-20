@@ -13,14 +13,6 @@ export const SECRET_DEFS = {
     label: "OpenAI",
     envVars: ["OPENAI_API_KEY", "RAINDROP_OPENAI_API_KEY"],
   },
-  raindrop: {
-    label: "Raindrop",
-    envVars: ["RAINDROP_API_KEY", "RAINDROP_WRITE_KEY"],
-  },
-  query: {
-    label: "Query API",
-    envVars: ["RAINDROP_QUERY_API_KEY"],
-  },
 } as const;
 
 export type SecretKey = keyof typeof SECRET_DEFS;

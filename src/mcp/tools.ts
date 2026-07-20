@@ -134,21 +134,8 @@ const TOOLS = [
     },
   },
   {
-    name: "import_cloud_trace",
-    description:
-      "Import one known production Raindrop event trace into the local Workshop DB and focus the connected Workshop UI on it by default. Required: event_id. Use when the user asks to pull/show/import a prod/cloud trace, or chooses a concrete cloud issue/event/signal/user/trace to inspect, and you already have a real event_id verified by Raindrop Cloud MCP get_event/list_events/search_events in the current turn. Do not use ids copied from assistant_output text, XML citation tags, markdown, or prior AI narrative unless Cloud MCP verifies them first. This is not a search tool: it downloads the trace with Workshop's configured Query API key, stores it locally, and returns a local run_id for get_run_outline/search_run/get_span_payload. If the result indicates the UI was not connected or the user still cannot see the run, call show_in_ui with the returned run_id.",
-    inputSchema: {
-      type: "object",
-      required: ["event_id"],
-      properties: {
-        event_id: { type: "string", description: "Production Raindrop event id returned by Raindrop Cloud MCP." },
-        open_in_ui: { type: "boolean", description: "Defaults to true. Set false to import without navigating the connected Workshop UI to the imported run." },
-      },
-    },
-  },
-  {
     name: "show_in_ui",
-    description: "Ask the connected Workshop browser UI to show a run, span, or filter. Use proactively when showing the evidence will help the user follow along, especially after importing a cloud trace, finding a relevant run, or identifying a span worth inspecting. Can navigate to a run, open a coarse filter by event_name or user_id, and optionally draft an annotation note for a run/span. This is a UI navigation/drafting helper, not trace inspection. Returns a clear status if no UI is connected.",
+    description: "Ask the connected Workshop browser UI to show a run, span, or filter. Use proactively when showing the evidence will help the user follow along, especially after finding a relevant run or identifying a span worth inspecting. Can navigate to a run, open a coarse filter by event_name or user_id, and optionally draft an annotation note for a run/span. This is a UI navigation/drafting helper, not trace inspection. Returns a clear status if no UI is connected.",
     inputSchema: {
       type: "object",
       properties: {
@@ -201,13 +188,6 @@ function currentAnnotationSource(): AgentAnnotationSource {
   const explicit = process.env.RAINDROP_WORKSHOP_ANNOTATION_SOURCE;
   if (explicit === "claude-code" || explicit === "codex") return explicit;
   return agentAnnotationSource(parseAgentProvider(process.env.RAINDROP_WORKSHOP_AGENT_PROVIDER) ?? getAgentProvider());
-}
-
-function transientQueryApiAuth(): { query_api_key?: string; query_api_key_token?: string } {
-  const queryApiKey = process.env.RAINDROP_QUERY_API_KEY?.trim();
-  if (queryApiKey) return { query_api_key: queryApiKey };
-  const queryApiKeyToken = process.env.RAINDROP_WORKSHOP_QUERY_API_KEY_TOKEN?.trim();
-  return queryApiKeyToken ? { query_api_key_token: queryApiKeyToken } : {};
 }
 
 function runForMcp(value: unknown): unknown {
@@ -461,34 +441,6 @@ export function registerTraceReadTools(
         if (args.include_parent === false) params.set("include_parent", "false");
         const qs = params.toString();
         return textResult(await callBackend(backendUrl, `/api/spans/${encodeURIComponent(args.span_id)}/context${qs ? "?" + qs : ""}`));
-      }
-      case "import_cloud_trace": {
-        if (typeof args.event_id !== "string" || !args.event_id.trim()) {
-          throw new McpError(ErrorCode.InvalidParams, "event_id required");
-        }
-        let res: Response;
-        try {
-          res = await fetch(`${backendUrl}/api/cloud/traces/import`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              event_id: args.event_id,
-              open_in_ui: args.open_in_ui !== false,
-              ...transientQueryApiAuth(),
-            }),
-          });
-        } catch (err) {
-          throw backendUnreachableError(backendUrl, err);
-        }
-        if (res.status === 400 || res.status === 404 || res.status === 413) {
-          const body = await res.json().catch(() => ({}));
-          throw new McpError(ErrorCode.InvalidParams, body?.error ?? "Could not import cloud trace");
-        }
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new McpError(ErrorCode.InternalError, body?.error ?? `Workshop backend returned ${res.status} importing cloud trace`);
-        }
-        return textResult(await res.json());
       }
       case "show_in_ui": {
         try {

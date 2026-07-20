@@ -176,54 +176,6 @@
 
 ---
 
-### F-001 — Remove all Cloud Raindrop integration
-
-**Context:** Workshop upstream has a SaaS cloud product at `app.raindrop.ai` with paid plans, API keys, OAuth, skills marketplace. Kolya wants ONLY the local debugger (the daemon on `localhost:5899` we already use). Cloud = kill.
-
-**Files in scope (all in `src/cloud/`):**
-- `src/cloud/apply.ts` — apply cloud config locally
-- `src/cloud/constants.ts` — cloud URLs, plan tiers
-- `src/cloud/cloud-mcp-proxy.ts` — proxy for cloud MCP
-- `src/cloud/env-file.ts` — write cloud config to .env
-- `src/cloud/import-trace.ts` — import traces from cloud
-- `src/cloud/offer.ts` — pricing/offer UI
-- `src/cloud/query-client.ts` — cloud REST client
-- `src/cloud/query-key.ts`
-- `src/cloud/setup.ts` — `raindrop cloud setup` entry
-- `src/cloud/skills.ts` — cloud marketplace skills
-- `src/cloud/transient-keys.ts`
-- `src/cloud/uninstall.ts`
-
-**Possibly coupled:**
-- `src/auth/{login,write-key,token-store,constants}.ts` — OAuth + write-key storage
-- `install.sh` — `raindrop cloud setup` install step
-- `bin/` (any cloud CLI subcommands)
-- `examples/` (any cloud-deploy demos)
-
-**Verification (regression bar):** local workshop daemon starts, OpenCode trace streams, UI shows run. No 401 from cloud. `raindrop cloud` command shouldn't exist anymore.
-
-**Approach:** **Three-step commit per file** for safety: (1) `rm` file + commit; (2) fix any caller — commit; (3) verify `bun run dev` still works. But because there's a lot of cross-references and the user explicitly wants this done, I'll go **directory-by-directory**:
-
-- Commit 1: `rm -rf src/cloud/` + fix any remaining imports
-- Commit 2: `rm` auth files (if verification proves cloud-only)
-- Commit 3: clean `install.sh` + `bin/`
-- Commit 4: clean `package.json` deps (`@raindrop-ai/claude-agent-sdk` if unused after F-002, `@clack/prompts` if cloud-only, `raindrop-ai` meta-pkg if it's cloud-only)
-- Commit 5: `grep -r "raindrop\.ai\|apiKeyHealth\|RAINDROP_CLOUD"` and clean
-
-**Todos:**
-- [x] Plan F-001 in 5 commits (this entry)
-- [ ] Audit caller chain: every import of `src/cloud/*` and `src/auth/*` to know blast radius
-- [ ] Commit 1: `rm -rf src/cloud/` + fix imports
-- [ ] Commit 2: `rm src/auth/*` (after verification)
-- [ ] Commit 3: clean `install.sh` + `bin/` (remove `cloud` subcommand)
-- [ ] Commit 4: clean `package.json` deps
-- [ ] Commit 5: final grep cleanup
-- [ ] `bun run dev` — local daemon starts, smoke test (OpenCode trace from real opencode-workshop-plugin works)
-- [ ] Update `README.md` (remove mentions of `raindrop cloud`, paid plans, OAuth)
-- [ ] Commit + push (5 commits)
-
----
-
 ## Backlog (not yet started, after F-001..F-005)
 
 - F-006 — Reverse-engineer upstream PRs from `raindrop-ai/workshop` selectively (cherry-pick, not full sync — we want specific patches only)
@@ -236,7 +188,15 @@
 
 ## Closed Features
 
-_(none yet — F-001 will land here once all todos are checked)_
+### F-001 — Remove all Cloud Raindrop integration — Closed 2026-07-21
+
+**Context:** Workshop upstream had a SaaS cloud product at `app.raindrop.ai` with paid plans, API keys, OAuth, skills marketplace. Kolya wanted ONLY the local debugger.
+
+**Result:** 5 commits removed `src/cloud/` (12 files, -2397 lines), `src/auth/` (5 files incl `oauth.ts`, -847 lines), cloud references from `install.sh` + `README.md` (-83 lines), dropped `@raindrop-ai/ai-sdk` dep (-4 lines), and swept remaining stragglers (MCP `import_cloud_trace` tool, secret-store entries, stale comments). Build + typecheck pass on every commit. Smoke test deferred pending user permission (D6).
+
+**Commits:** `3122268` (C1 src/cloud/) → `451db47` (C2 src/auth/) → `b02efdf` (C3 install/README) → `2d98a41` (C4 deps) → this commit (C5 sweep + PLAN closeout)
+
+**Backward compat:** `source: "local" | "cloud" | null` retained in `src/db.ts` + `src/server.ts` for historical traces already in DB. Drip API URLs (`raindrop.ai` domain) are non-cloud (community content feature).
 
 ---
 
