@@ -2,8 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-export type AgentProviderId = "claude" | "codex";
-export type AgentAnnotationSource = "claude-code" | "codex";
+export type AgentProviderId = "opencode";
+export type AgentAnnotationSource = "opencode";
 
 export interface AgentLoadout {
   tools: string[];
@@ -103,9 +103,9 @@ export function getAgentProvider(): AgentProviderId {
   if (envProvider) return envProvider;
   try {
     const parsed = JSON.parse(fs.readFileSync(STATE_PATH, "utf8")) as { provider?: unknown };
-    return parseAgentProvider(parsed.provider) ?? "claude";
+    return parseAgentProvider(parsed.provider) ?? "opencode";
   } catch {
-    return "claude";
+    return "opencode";
   }
 }
 
@@ -116,25 +116,25 @@ export function setAgentProvider(provider: AgentProviderId): AgentProviderId {
 }
 
 export function parseAgentProvider(value: unknown): AgentProviderId | null {
-  return value === "claude" || value === "codex" ? value : null;
+  return value === "opencode" ? value : null;
 }
 
-export function defaultAgentLoadout(provider: AgentProviderId): AgentLoadout {
+export function defaultAgentLoadout(_provider: AgentProviderId): AgentLoadout {
   return {
     tools: RAINDROP_MCP_TOOLS.map((tool) => `workshop.${tool.name}`),
     mcps: ["workshop"],
     skills: [],
     plugins: [],
-    slash_commands: provider === "claude" ? [] : ["/clear", "/trace"],
+    slash_commands: ["/clear", "/trace"],
   };
 }
 
-export function agentProviderLabel(provider: AgentProviderId): string {
-  return provider === "codex" ? "Codex" : "Claude Code";
+export function agentProviderLabel(_provider: AgentProviderId): string {
+  return "OpenCode";
 }
 
-export function agentAnnotationSource(provider: AgentProviderId): AgentAnnotationSource {
-  return provider === "codex" ? "codex" : "claude-code";
+export function agentAnnotationSource(_provider: AgentProviderId): AgentAnnotationSource {
+  return "opencode";
 }
 
 export interface WorkshopSidepanelPromptInput {
@@ -146,8 +146,8 @@ export interface WorkshopSidepanelPromptInput {
 export function workshopSidepanelPrompt(input: WorkshopSidepanelPromptInput): string {
   return [
     ...baseSidepanelInstructions(input.localMcpName),
-    ...prioritizationInstructions(input.provider),
-    providerCapabilities(input.provider),
+    ...prioritizationInstructions(),
+    providerCapabilities(),
     runInstruction(input.runId),
   ].join(" ");
 }
@@ -166,21 +166,16 @@ function baseSidepanelInstructions(localMcpName: string): string[] {
   ];
 }
 
-function prioritizationInstructions(provider: AgentProviderId): string[] {
-  const localContext = provider === "claude"
-    ? "For those questions, first use any relevant Claude Code memory, project context, and available MCPs."
-    : "For those questions, first use the active workspace, conversation context, and available MCPs.";
+function prioritizationInstructions(): string[] {
   return [
     `Treat open-ended prioritization questions like "what should I work on today?", "what needs attention?", or "where should I focus?" as requests to gather context before answering.`,
-    localContext,
+    "For those questions, first use the active workspace, conversation context, and available MCPs.",
     "Do not answer that you lack visibility into priorities until you have checked the relevant available context, or clearly explain which required source is unavailable.",
   ];
 }
 
-function providerCapabilities(provider: AgentProviderId): string {
-  return provider === "claude"
-    ? "You may also use the user's normal Claude Code tools, skills, memories, and MCP servers when they are relevant."
-    : "You may also use your normal Codex workspace capabilities when they are relevant.";
+function providerCapabilities(): string {
+  return "You may also use your normal OpenCode workspace capabilities when they are relevant.";
 }
 
 function runInstruction(runId?: string | null): string {
@@ -190,11 +185,10 @@ function runInstruction(runId?: string | null): string {
 }
 
 /**
- * Build the env passed to claude/codex child processes.
+ * Build the env passed to the local OpenCode child process.
  *
- * After the Raindrop Cloud integration was removed, this is a thin wrapper
- * around the daemon environment. The signature is kept (with an ignored
- * argument) so existing call sites do not need to change in lockstep.
+ * The signature is kept (with an ignored argument) so existing call sites do
+ * not need to change in lockstep.
  */
 export function chatChildEnv(_queryApiKeyToken?: string | null): NodeJS.ProcessEnv {
   return { ...process.env };

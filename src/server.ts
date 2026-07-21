@@ -1,7 +1,6 @@
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
-import type { AddressInfo } from "net";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -17,8 +16,6 @@ import { runReplay } from "./replay";
 import { discoverReplayAgents, loadAgentsConfig, saveAgentsConfig, extractContextFromTrace, registerReplayProjectIfPresent } from "./agents-config";
 import { resolveBuiltAppDir } from "./ui-assets";
 import { setReplayTrace } from "./replay-map";
-import { getClaudeSession, getLatestClaudeLoadout, listClaudeSessions, type ClaudeLoadout } from "./claude-sessions";
-import { runClaudeCliChat } from "./claude-cli-chat";
 import {
   agentAnnotationSource,
   agentProviderLabel,
@@ -35,13 +32,6 @@ import {
   getActiveWorkspace,
   setActiveWorkspace,
 } from "./active-workspace";
-import {
-  AskUserQuestionBridge,
-  askUserQuestionAllow,
-  askUserQuestionDeny,
-  parseAnswerMap,
-  parseAskUserQuestionHookInput,
-} from "./claude-ask-user-question";
 import { createViewingRegistry } from "./viewing-registry";
 import { createLocalOriginGuard, parseAllowedOriginsEnv } from "./local-origin-guard";
 import { isLoopbackRemoteAddress } from "./local-access";
@@ -65,7 +55,7 @@ import {
 } from "./secret-store";
 
 function parseAnnotationSource(value: unknown): AnnotationSource | null {
-  return value === "user" || value === "claude-code" || value === "codex" ? value : null;
+  return value === "user" || value === "opencode" ? value : null;
 }
 
 function getStringMetadata(
@@ -421,23 +411,13 @@ export async function createServer(port: number) {
     for (const ws of clients) { if (ws.readyState === WebSocket.OPEN) ws.send(msg); }
   }
 
-  const askUserQuestions = new AskUserQuestionBridge(broadcast);
   let agentProvider: AgentProviderId = getAgentProvider();
-  let latestClaudeLoadout: ClaudeLoadout | null = null;
+  const latestAgentLoadout: ReturnType<typeof defaultAgentLoadout> | null = null;
 
   const viewingRegistry = createViewingRegistry();
-  const ANTHROPIC_MODELS_CACHE_TTL_MS = 60 * 60 * 1000;
-  let anthropicModelsCache: { expiresAt: number; models: string[] } | null = null;
-  const claudeCliChatEnabled =
-    port !== 0 && process.env.RAINDROP_WORKSHOP_CLAUDE_CLI_CHAT !== "0";
   const localOriginGuard = createLocalOriginGuard({
     extraAllowedOrigins: parseAllowedOriginsEnv(process.env.RAINDROP_WORKSHOP_ALLOWED_ORIGINS),
   });
-
-  function backendUrl(): string {
-    const addr = server.address() as AddressInfo | null;
-    return `http://127.0.0.1:${addr?.port ?? port}`;
-  }
 
   function hasConnectedUi(): boolean {
     for (const ws of clients) {
@@ -508,47 +488,20 @@ export async function createServer(port: number) {
     return workspace?.cwd ?? null;
   }
 
-  function rememberClaudeLoadout(event: unknown) {
-    if (!event || typeof event !== "object") return;
-    const typed = event as Record<string, unknown>;
-    if (typed.type !== "loadout") return;
-    const tools = stringList(typed.tools);
-    const mcps = stringList(typed.mcps);
-    const skills = stringList(typed.skills);
-    const plugins = stringList(typed.plugins);
-    const slashCommands = stringList(typed.slash_commands);
-    latestClaudeLoadout = {
-      tools: tools.length ? tools : latestClaudeLoadout?.tools ?? [],
-      mcps: mcps.length ? mcps : latestClaudeLoadout?.mcps ?? [],
-      skills: skills.length ? skills : latestClaudeLoadout?.skills ?? [],
-      plugins: plugins.length ? plugins : latestClaudeLoadout?.plugins ?? [],
-      slash_commands: slashCommands.length ? slashCommands : latestClaudeLoadout?.slash_commands ?? [],
-      model: typeof typed.model === "string" ? typed.model : undefined,
-    };
-    broadcast("claude_loadout", latestClaudeLoadout);
-    broadcast("agent_loadout", latestClaudeLoadout);
-  }
-
-  function currentLoadout(cwd: string) {
-    if (!latestClaudeLoadout) {
-      latestClaudeLoadout = getLatestClaudeLoadout(cwd);
-    }
-    return latestClaudeLoadout ?? defaultAgentLoadout("claude");
+  function currentLoadout(_cwd: string) {
+    return latestAgentLoadout ?? defaultAgentLoadout("opencode");
   }
 
   wss.on("connection", (ws) => {
     const wsId = randomUUID();
     clients.add(ws);
-    if (latestClaudeLoadout) {
-      ws.send(JSON.stringify({ event: "claude_loadout", data: latestClaudeLoadout }));
+    if (latestAgentLoadout) {
+      ws.send(JSON.stringify({ event: "agent_loadout", data: latestAgentLoadout }));
     }
     ws.send(JSON.stringify({ event: "agent_provider", data: { provider: agentProvider } }));
     const workspace = getActiveWorkspace();
     if (workspace) {
       ws.send(JSON.stringify({ event: "agent_loadout", data: currentLoadout(workspace.cwd) }));
-    }
-    for (const pending of askUserQuestions.active()) {
-      ws.send(JSON.stringify({ event: "claude_ask_user_question", data: pending }));
     }
     ws.on("message", (raw) => {
       let msg: any;
@@ -623,9 +576,7 @@ export async function createServer(port: number) {
   // Accept protobuf bodies so Traceloop OTLP exports aren't silently dropped
   app.use(express.raw({ limit: "50mb", type: "application/x-protobuf" }));
 
-  server.on("close", () => {
-    askUserQuestions.closeAll();
-  });
+  server.on("close", () => {});
 
   // Health check endpoint — used by SDKs to auto-detect a running debugger
   app.get("/health", (_req, res) => {
@@ -886,7 +837,7 @@ export async function createServer(port: number) {
         upsertEventSpan({
           id: `evt_${eventId}`,
           run_id: runId,
-          name: aiData.model ?? "claude_code_session",
+          name: aiData.model ?? "opencode_session",
           span_type: "LLM",
           status: body.is_pending === false ? "OK" : "UNSET",
           input_payload: input ?? undefined,
@@ -1251,12 +1202,6 @@ export async function createServer(port: number) {
       registerReplayProjectIfPresent(workspace.cwd).catch((err) => {
         console.warn("[workshop] failed to refresh replay project registration:", err);
       });
-      try {
-        latestClaudeLoadout = getLatestClaudeLoadout(workspace.cwd);
-      } catch (err) {
-        latestClaudeLoadout = null;
-        console.warn("[workshop] failed to load Claude loadout for active workspace:", err);
-      }
       broadcast("workspace_changed", workspace);
       res.json(workspace);
     } catch (err) {
@@ -1269,11 +1214,7 @@ export async function createServer(port: number) {
   });
 
   app.post("/api/agent/provider", (req, res) => {
-    const provider = parseAgentProvider((req.body as Record<string, unknown> | null)?.provider);
-    if (!provider) {
-      res.status(400).json({ error: "provider must be 'claude' or 'codex'" });
-      return;
-    }
+    const provider = parseAgentProvider((req.body as Record<string, unknown> | null)?.provider) ?? "opencode";
     agentProvider = setAgentProvider(provider);
     broadcast("agent_provider", { provider: agentProvider });
     const workspace = getActiveWorkspace();
@@ -1284,14 +1225,11 @@ export async function createServer(port: number) {
   app.get("/api/agent/sessions", (req, res) => {
     const cwd = cwdFromRequestOrActive(req, res);
     if (!cwd) return;
-    const requestedProvider = req.query.provider === undefined
-      ? null
-      : parseAgentProvider(req.query.provider);
-    if (req.query.provider !== undefined && !requestedProvider) {
-      res.status(400).json({ error: "provider must be 'claude' or 'codex'" });
+    if (req.query.provider !== undefined && !parseAgentProvider(req.query.provider)) {
+      res.status(400).json({ error: "unknown provider" });
       return;
     }
-    res.json(listClaudeSessions(cwd));
+    res.json([]);
   });
 
   app.get("/api/agent/loadout", (req, res) => {
@@ -1300,249 +1238,48 @@ export async function createServer(port: number) {
     res.json(currentLoadout(cwd));
   });
 
-  app.get("/api/agent/sessions/:id", (req, res) => {
-    const cwd = cwdFromRequestOrActive(req, res);
-    if (!cwd) return;
-    const session = getClaudeSession(cwd, req.params.id);
-    if (!session) {
-      res.status(404).json({ error: "Claude session not found" });
-      return;
-    }
-    res.json(session);
+  app.get("/api/agent/sessions/:id", (_req, res) => {
+    res.status(404).json({ error: "agent session lookup not available" });
   });
 
   app.post("/api/agent/messages", localOriginGuard, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const { content, session_id, run_id, client_message_id } = body;
+    const { content, client_message_id } = body;
     if (typeof content !== "string" || !content.trim()) {
       res.status(400).json({ error: "content required" });
       return;
     }
-    if (session_id != null && typeof session_id !== "string") {
-      res.status(400).json({ error: "session_id must be a string" });
-      return;
-    }
+    if (!cwdFromRequestOrActive(req, res)) return;
     const requestProvider = agentProvider;
-    if (requestProvider === "claude" && !claudeCliChatEnabled) {
-      res.status(409).json({ error: "Claude Code chat is disabled" });
-      return;
-    }
-    const cwd = cwdFromRequestOrActive(req, res);
-    if (!cwd) return;
-
-    let providerSessionId = typeof session_id === "string" && session_id ? session_id : null;
-    // Claude Code owns its resume-token validity. Workshop's JSONL reader can
-    // miss a valid Claude session when Claude stores it under a normalized
-    // project path or before the file is visible here, so pass --resume through
-    // and let Claude decide.
     const clientMessageId = typeof client_message_id === "string" && client_message_id
       ? client_message_id
       : randomUUID();
-    let text = "";
-    let errorText = "";
-    const events: unknown[] = [];
-    const broadcastStreamEvent = (event: unknown) => {
-      const data = {
-        client_message_id: clientMessageId,
-        session_id: providerSessionId,
-        provider: requestProvider,
-        event,
-      };
-      broadcast("agent_message_stream", data);
-      if (requestProvider === "claude") broadcast("claude_message_stream", data);
-    };
-    try {
-      const chatInput = {
-        backendUrl: backendUrl(),
-        content,
-        cwd,
-        runId: typeof run_id === "string" ? run_id : null,
-        resumeSessionId: providerSessionId,
-      };
-      const result = await runClaudeCliChat(chatInput, {
-        onEvent(event) {
-          events.push(event);
-          rememberClaudeLoadout(event);
-          broadcastStreamEvent(event);
-        },
-        onClaudeSession(sessionId) {
-          providerSessionId = sessionId;
-          broadcastStreamEvent({ type: "provider_session", sessionId });
-        },
-        onText(nextContent) {
-          text = nextContent;
-          broadcastStreamEvent({ type: "text", content: nextContent });
-        },
-        onStatus() {},
-        onError(nextContent) {
-          errorText = nextContent;
-          broadcastStreamEvent({ type: "error", content: nextContent });
-        },
-      });
-      if (result.code !== 0 || errorText) {
-        res.status(502).json({
-          error: errorText || result.stderr || `${agentProviderLabel(requestProvider)} exited with code ${result.code ?? "unknown"}`,
-          client_message_id: clientMessageId,
-          session_id: providerSessionId,
-          events,
-        });
-        return;
-      }
-      res.json({
-        client_message_id: clientMessageId,
-        session_id: providerSessionId,
-        text,
-        events,
-        session: providerSessionId ? getClaudeSession(cwd, providerSessionId) : null,
-      });
-    } catch (err) {
-      res.status(500).json({
-        error: (err as Error).message || `${agentProviderLabel(requestProvider)} chat failed`,
-        client_message_id: clientMessageId,
-        session_id: providerSessionId,
-        events,
-      });
-    }
+    const unsupported = `Workshop no longer ships a built-in ${agentProviderLabel(requestProvider)} CLI runner.`;
+    broadcast("agent_message_stream", {
+      client_message_id: clientMessageId,
+      session_id: null,
+      provider: requestProvider,
+      event: { type: "error", content: unsupported },
+    });
+    res.status(501).json({
+      error: unsupported,
+      client_message_id: clientMessageId,
+      session_id: null,
+      events: [],
+      text: "",
+    });
   });
 
-  app.get("/api/claude/sessions", (req, res) => {
-    const cwd = cwdFromRequestOrActive(req, res);
-    if (!cwd) return;
-    res.json(listClaudeSessions(cwd));
-  });
-
-  app.get("/api/claude/loadout", (req, res) => {
-    const cwd = cwdFromRequestOrActive(req, res);
-    if (!cwd) return;
-    if (!latestClaudeLoadout) {
-      latestClaudeLoadout = getLatestClaudeLoadout(cwd);
-    }
-    res.json(latestClaudeLoadout ?? { tools: [], mcps: [], skills: [], plugins: [], slash_commands: [] });
-  });
-
-  app.get("/api/claude/sessions/:id", (req, res) => {
-    const cwd = cwdFromRequestOrActive(req, res);
-    if (!cwd) return;
-    const session = getClaudeSession(cwd, req.params.id);
-    if (!session) {
-      res.status(404).json({ error: "Claude session not found" });
-      return;
-    }
-    res.json(session);
-  });
-
-  app.post("/api/claude/ask-user-question/hook", async (req, res) => {
-    const hookInput = parseAskUserQuestionHookInput(req.body);
-    if (!hookInput) {
-      res.status(400).json({ error: "AskUserQuestion tool_input.questions required" });
-      return;
-    }
-
-    const answers = await askUserQuestions.ask(hookInput);
-    res.json(answers
-      ? askUserQuestionAllow(hookInput.toolInput, answers)
-      : askUserQuestionDeny("Workshop closed before the question was answered."));
-  });
-
-  app.post("/api/claude/ask-user-question/:id/answer", (req, res) => {
-    const answers = parseAnswerMap((req.body as Record<string, unknown> | null)?.answers);
-    if (!answers) {
-      res.status(400).json({ error: "answers must be a non-empty string map" });
-      return;
-    }
-    if (!askUserQuestions.answer(req.params.id, answers)) {
-      res.status(404).json({ error: "pending question not found" });
-      return;
-    }
-    res.json({ ok: true });
-  });
-
-  app.post("/api/claude/messages", localOriginGuard, async (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const { content, session_id, run_id, client_message_id } = body;
-    if (typeof content !== "string" || !content.trim()) {
-      res.status(400).json({ error: "content required" });
-      return;
-    }
-    if (session_id != null && typeof session_id !== "string") {
-      res.status(400).json({ error: "session_id must be a string" });
-      return;
-    }
-    if (!claudeCliChatEnabled) {
-      res.status(409).json({ error: "Claude Code chat is disabled" });
-      return;
-    }
-    const cwd = cwdFromRequestOrActive(req, res);
-    if (!cwd) return;
-
-    let claudeSessionId = typeof session_id === "string" && session_id ? session_id : null;
-    const clientMessageId = typeof client_message_id === "string" && client_message_id
-      ? client_message_id
-      : randomUUID();
-    let text = "";
-    let errorText = "";
-    const events: unknown[] = [];
-    const broadcastStreamEvent = (event: unknown) => {
-      broadcast("claude_message_stream", {
-        client_message_id: clientMessageId,
-        session_id: claudeSessionId,
-        event,
-      });
-    };
-    try {
-      const result = await runClaudeCliChat(
-        {
-          backendUrl: backendUrl(),
-          content,
-          cwd,
-          runId: typeof run_id === "string" ? run_id : null,
-          resumeSessionId: claudeSessionId,
+  app.get("/api/providers/status", (_req, res) => {
+    res.json({
+      providers: {
+        opencode: {
+          provider: "opencode",
+          mode: "cli_stream",
+          state: "green",
         },
-        {
-          onEvent(event) {
-            events.push(event);
-            rememberClaudeLoadout(event);
-            broadcastStreamEvent(event);
-          },
-          onClaudeSession(sessionId) {
-            claudeSessionId = sessionId;
-            broadcastStreamEvent({ type: "provider_session", sessionId });
-          },
-          onText(content) {
-            text = content;
-            broadcastStreamEvent({ type: "text", content });
-          },
-          onStatus() {},
-          onError(content) {
-            errorText = content;
-            broadcastStreamEvent({ type: "error", content });
-          },
-        },
-      );
-      if (result.code !== 0 || errorText) {
-        res.status(502).json({
-          error: errorText || result.stderr || `Claude Code exited with code ${result.code ?? "unknown"}`,
-          client_message_id: clientMessageId,
-          session_id: claudeSessionId,
-          events,
-        });
-        return;
-      }
-      res.json({
-        client_message_id: clientMessageId,
-        session_id: claudeSessionId,
-        text,
-        events,
-        session: claudeSessionId ? getClaudeSession(cwd, claudeSessionId) : null,
-      });
-    } catch (err) {
-      res.status(500).json({
-        error: (err as Error).message || "Claude Code chat failed",
-        client_message_id: clientMessageId,
-        session_id: claudeSessionId,
-        events,
-      });
-    }
+      },
+    });
   });
 
   app.get("/api/status", (_req, res) => {
@@ -1551,76 +1288,9 @@ export async function createServer(port: number) {
       agent: {
         provider: agentProvider,
         mode: "cli_stream",
-        state: claudeCliChatEnabled ? "green" : "gray",
-      },
-      claude_code: {
-        mode: "cli_stream",
-        state: claudeCliChatEnabled ? "green" : "gray",
+        state: "green",
       },
     });
-  });
-
-  app.get("/api/models/anthropic", async (req, res) => {
-    if (anthropicModelsCache && anthropicModelsCache.expiresAt > Date.now()) {
-      res.json({ models: anthropicModelsCache.models, cached: true });
-      return;
-    }
-
-    const apiKey = getEffectiveSecret("anthropic");
-    if (!apiKey) {
-      res.status(400).json({ error: "No Anthropic API key. Add one in Settings." });
-      return;
-    }
-
-    try {
-      const resp = await fetch("https://api.anthropic.com/v1/models", {
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-      });
-      if (!resp.ok) {
-        const err = await resp.text();
-        if (anthropicModelsCache?.models?.length) {
-          res.json({ models: anthropicModelsCache.models, cached: true, stale: true });
-          return;
-        }
-        res.status(resp.status).json({ error: err || `Anthropic models request failed (${resp.status})` });
-        return;
-      }
-
-      const payload = await resp.json().catch(() => ({}));
-      const rows = Array.isArray((payload as any)?.data)
-        ? (payload as any).data
-        : Array.isArray((payload as any)?.models)
-          ? (payload as any).models
-          : [];
-      const models = rows
-        .map((m: any) => (typeof m?.id === "string" ? m.id : null))
-        .filter((id: string | null): id is string => !!id)
-        .sort((a: string, b: string) => a.localeCompare(b));
-
-      if (models.length === 0) {
-        if (anthropicModelsCache?.models?.length) {
-          res.json({ models: anthropicModelsCache.models, cached: true, stale: true });
-          return;
-        }
-        res.status(502).json({ error: "Anthropic models response was empty." });
-        return;
-      }
-
-      anthropicModelsCache = {
-        expiresAt: Date.now() + ANTHROPIC_MODELS_CACHE_TTL_MS,
-        models,
-      };
-      res.json({ models, cached: false });
-    } catch (err: any) {
-      if (anthropicModelsCache?.models?.length) {
-        res.json({ models: anthropicModelsCache.models, cached: true, stale: true });
-        return;
-      }
-      res.status(500).json({ error: err?.message ?? "Failed to fetch Anthropic models." });
-    }
   });
 
   app.get("/api/annotations", (req, res) => {
@@ -2328,8 +1998,4 @@ function resolveRunId(input: string): string | null {
   const matches = (getRuns() as Array<{ id: string }>).filter((run) => run.id.startsWith(input));
   if (matches.length !== 1) return null;
   return matches[0].id;
-}
-
-function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
