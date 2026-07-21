@@ -30,7 +30,7 @@ function cwdLabel(cwd: string | null): string {
 
 export function ConnectionIndicator({
   cwd = null,
-  provider = "claude",
+  provider = "opencode",
   onChooseFolder,
 }: {
   cwd?: string | null;
@@ -80,7 +80,7 @@ export function ConnectionIndicator({
   const installer =
     "curl -fsSL https://raw.githubusercontent.com/raindrop-ai/cli/main/install.sh | bash";
   const mcpAddCommand =
-    "claude mcp add raindrop -- bun /path/to/workshop2/src/index.ts workshop mcp";
+    "opencode mcp add raindrop -- bun /path/to/workshop2/src/index.ts workshop mcp";
   const dir = status.state === "green" ? cwdLabel(cwd) : "";
   const statusContent = (
     <>
@@ -163,8 +163,8 @@ export function ConnectionIndicator({
       {showRemediation && status.state !== "green" && (
         <div className="absolute right-0 top-full mt-2 w-80 rounded-lg border border-white/10 bg-zinc-900/95 backdrop-blur p-3 z-50 text-xs">
           <div className="text-white/80 mb-2 leading-relaxed">
-            Workshop chat streams through your local {providerLabel(provider)} CLI. Make sure
-            <code className="mx-1 rounded bg-black/40 px-1 font-mono">{provider === "codex" ? "codex" : "claude"}</code>
+            Workshop chat streams through your local OpenCode CLI. Make sure
+            <code className="mx-1 rounded bg-black/40 px-1 font-mono">opencode</code>
             is on your PATH and you are logged in.
           </div>
           <button
@@ -189,15 +189,11 @@ export function ConnectionIndicator({
                 <span className="flex-1 select-all break-all">{mcpAddCommand}</span>
               </div>
               <div>
-                Workshop chat streams through {providerLabel(provider)} and
-                passes the Raindrop MCP into that session. The Claude Code MCP
+                Workshop chat streams through OpenCode and
+                passes the Raindrop MCP into that session. The OpenCode MCP
                 entry lives in{" "}
                 <code className="font-mono bg-black/40 px-1 rounded">
-                  ~/.claude.json
-                </code>
-                ; Codex can also read MCP servers from{" "}
-                <code className="font-mono bg-black/40 px-1 rounded">
-                  ~/.codex/config.toml
+                  ~/.config/opencode/config.json
                 </code>
                 .
               </div>

@@ -34,7 +34,7 @@ export async function saveAgents(agents: AgentsRegistry): Promise<void> {
 
 export async function getAgentProvider(): Promise<AgentProviderId> {
   const body = await apiJsonOrNull<{ provider?: unknown }>("/api/agent/provider");
-  return isAgentProvider(body?.provider) ? body.provider : "claude";
+  return isAgentProvider(body?.provider) ? body.provider : "opencode";
 }
 
 export async function setAgentProvider(provider: AgentProviderId): Promise<void> {

@@ -1,7 +1,6 @@
 import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, ChevronLeft, Cloud, Copy, ExternalLink, Folder as FolderIcon, Home, KeyRound, Loader2, Plus, Send, Terminal, Wrench, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
-import claudeCodeLogo from "../assets/claude-code-logo.png";
-import codexLogo from "../assets/codex-logo.svg";
+// TODO(F-002 ui): replace Terminal icon with src/assets/opencode-logo.{svg,png} once added.
 import { useWorkshopEvent } from "../hooks/use-workshop-ws";
 import { router } from "../router";
 import { runPath } from "../utils/navigation";
@@ -198,7 +197,7 @@ export function MessagePane({ activeRunId }: MessagePaneProps) {
   const [pendingQuestions, setPendingQuestions] = useState<ClaudeAskUserQuestion[]>([]);
   const [liveBlocks, setLiveBlocks] = useState<AssistantMessageBlock[]>([]);
   const [loadout, setLoadout] = useState<AgentLoadout | null>(null);
-  const [provider, setProvider] = useState<AgentProviderId>("claude");
+  const [provider, setProvider] = useState<AgentProviderId>("opencode");
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const [showProviderIntro, setShowProviderIntro] = useState(() => !loadProviderIntroSeen());
   const [terminalCommandCopied, setTerminalCommandCopied] = useState(false);
@@ -1024,23 +1023,17 @@ export function MessagePane({ activeRunId }: MessagePaneProps) {
   );
 }
 
-function FloatingAskButton({ provider, onOpen }: { provider: AgentProviderId; onOpen: () => void }) {
+function FloatingAskButton({ provider: _provider, onOpen }: { provider: AgentProviderId; onOpen: () => void }) {
   return (
     <div className="group fixed bottom-0 right-0 z-40">
-      <div className="pointer-events-none absolute -top-14 right-16 grid h-12 w-12 scale-75 place-items-center rounded-full border border-white/45 bg-white/95 opacity-0 shadow-[0_16px_40px_rgba(255,255,255,0.18),0_8px_26px_rgba(0,0,0,0.32)] transition-all duration-300 group-hover:-translate-y-2 group-hover:-rotate-6 group-hover:scale-100 group-hover:opacity-100 [&>img]:brightness-0">
-        <ProviderMark provider="claude" open={true} />
-      </div>
-      <div className="pointer-events-none absolute -top-12 right-3 grid h-11 w-11 scale-75 place-items-center rounded-full border border-white/40 bg-white/95 opacity-0 shadow-[0_16px_40px_rgba(255,255,255,0.18)] transition-all duration-300 delay-75 group-hover:-translate-y-3 group-hover:rotate-12 group-hover:scale-100 group-hover:opacity-100">
-        <img src={codexLogo} alt="" className="h-8 w-8 object-contain" />
-      </div>
       <button
         type="button"
         onClick={onOpen}
         className="flex h-11 items-center gap-2 rounded-tl-[15px] rounded-r-none rounded-bl-none border border-r-0 border-b-0 border-white/80 bg-white/95 px-[26px] text-sm font-medium text-zinc-950 shadow-[0_26px_70px_rgba(0,0,0,0.72),0_8px_22px_rgba(255,255,255,0.18),0_0_0_1px_rgba(0,0,0,0.08)] backdrop-blur transition-[transform,background-color,border-color,color,box-shadow] hover:-translate-y-0.5 hover:border-white hover:bg-white hover:text-black hover:shadow-[0_32px_90px_rgba(0,0,0,0.82),0_10px_30px_rgba(255,255,255,0.24),0_0_0_1px_rgba(0,0,0,0.1)] active:translate-y-0"
-        title={`Ask ${providerLabel(provider)}`}
+        title="Ask OpenCode"
       >
         <Terminal className="h-4 w-4 text-zinc-950" />
-        <span>Ask Claude Code</span>
+        <span>Ask OpenCode</span>
       </button>
     </div>
   );
@@ -1275,99 +1268,33 @@ function HeaderIconTooltip({ label, children }: { label: string; children: React
   );
 }
 
-function ProviderMark({ provider, open }: { provider: AgentProviderId; open: boolean }) {
-  if (provider === "claude") {
-    return <img src={claudeCodeLogo} alt="" className={`h-8 w-8 object-contain ${open ? "" : "opacity-80"}`} />;
-  }
+function ProviderMark({ open }: { provider: AgentProviderId; open: boolean }) {
   return (
-    <span className="grid h-8 w-8 place-items-center rounded-full bg-white shadow-[0_0_24px_rgba(255,255,255,0.12)]">
-      <img src={codexLogo} alt="" className="h-7 w-7 object-contain" />
+    <span className={`grid h-8 w-8 place-items-center rounded-full bg-white shadow-[0_0_24px_rgba(255,255,255,0.12)] ${open ? "" : "opacity-80"}`}>
+      <Terminal className="h-4 w-4 text-zinc-950" />
     </span>
   );
 }
 
-function SmallProviderIcon({ provider }: { provider: AgentProviderId }) {
-  return provider === "claude"
-    ? <img src={claudeCodeLogo} alt="" className="h-4 w-4 object-contain brightness-0 invert" />
-    : <img src={codexLogo} alt="" className="h-4 w-4 object-contain invert" />;
+function SmallProviderIcon(_props: { provider: AgentProviderId }) {
+  return <Terminal className="h-4 w-4 text-white" />;
 }
 
-function LargeProviderIcon({ provider }: { provider: AgentProviderId }) {
-  return provider === "claude"
-    ? <img src={claudeCodeLogo} alt="" className="h-7 w-7 object-contain brightness-0 invert" />
-    : <img src={codexLogo} alt="" className="h-7 w-7 object-contain invert" />;
+function LargeProviderIcon(_props: { provider: AgentProviderId }) {
+  return <Terminal className="h-7 w-7 text-white" />;
 }
 
-function ProviderDropdown({
-  provider,
-  busy,
-  onProviderChange,
-}: {
-  provider: AgentProviderId;
-  busy: boolean;
-  onProviderChange: (provider: AgentProviderId) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
+function ProviderDropdown({ provider }: { provider: AgentProviderId; busy: boolean; onProviderChange: (provider: AgentProviderId) => void }) {
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex min-h-8 items-center gap-2 rounded-md px-2 text-xs font-medium text-white/75 transition-colors hover:bg-white/5 hover:text-white"
-        aria-expanded={open}
-      >
-        <SmallProviderIcon provider={provider} />
-        <span>{providerLabel(provider)}</span>
-        <ChevronDown className={`h-3.5 w-3.5 text-white/35 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 min-w-44 rounded-lg border border-white/10 bg-zinc-900/95 p-1 text-xs shadow-2xl backdrop-blur">
-          {(["claude", "codex"] as AgentProviderId[]).map((option) => (
-            <button
-              key={option}
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setOpen(false);
-                onProviderChange(option);
-              }}
-              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                provider === option ? "bg-white/10 text-white" : "text-white/65 hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              <SmallProviderIcon provider={option} />
-              <span>{providerLabel(option)}</span>
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="flex min-h-8 items-center gap-2 rounded-md px-2 text-xs font-medium text-white/75">
+      <SmallProviderIcon provider={provider} />
+      <span>{providerLabel(provider)}</span>
     </div>
   );
 }
 
-function ProviderThinking({ provider }: { provider: AgentProviderId }) {
-  if (provider === "claude") {
-    return <div className="text-xs text-white/40">Claude Code is thinking...</div>;
-  }
-  return (
-    <div className="flex items-center gap-2 text-xs text-white/45">
-      <span className="grid h-6 w-6 animate-pulse place-items-center rounded-full bg-white">
-        <img src={codexLogo} alt="" className="h-5 w-5 object-contain" />
-      </span>
-      <span>Codex is working...</span>
-    </div>
-  );
+function ProviderThinking(_props: { provider: AgentProviderId }) {
+  return <div className="text-xs text-white/40">OpenCode is thinking...</div>;
 }
 
 function applyLiveStreamEvent(blocks: AssistantMessageBlock[], event: AgentStreamEvent): AssistantMessageBlock[] {
@@ -1672,10 +1599,8 @@ function ChatList({
           <div className="flex flex-1 items-center justify-center px-6 py-8">
             <AgentConnectCard
               provider={provider}
-              selectedProvider={introProvider}
               error={providerError}
               busy={providerBusy}
-              onSelectedProviderChange={setIntroProvider}
               onProviderChange={onProviderIntroChoice}
             />
           </div>
@@ -1732,17 +1657,13 @@ function ChatList({
 
 function AgentConnectCard({
   provider,
-  selectedProvider,
   error,
   busy,
-  onSelectedProviderChange,
   onProviderChange,
 }: {
   provider: AgentProviderId;
-  selectedProvider: AgentProviderId;
   error: string | null;
   busy: boolean;
-  onSelectedProviderChange: (provider: AgentProviderId) => void;
   onProviderChange: (provider: AgentProviderId) => void;
 }) {
   return (
@@ -1751,35 +1672,17 @@ function AgentConnectCard({
       <p className="mx-auto mt-2 max-w-[300px] text-sm leading-relaxed text-white/48">
         Ask questions about traces and resume chats from your terminal.
       </p>
-      <div className="mt-5 grid grid-cols-2 gap-1.5 rounded-xl border border-white/10 bg-black/15 p-1">
-        {(["claude", "codex"] as AgentProviderId[]).map((option) => {
-          const active = selectedProvider === option;
-          return (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onSelectedProviderChange(option)}
-              disabled={busy}
-              className={`flex min-h-12 items-center justify-center gap-2 rounded-lg border px-2.5 text-xs transition-[transform,background-color,border-color,color] active:scale-[0.98] ${
-                active
-                  ? "border-white/18 bg-white/[0.08] text-white"
-                  : "border-transparent text-white/50 hover:bg-white/[0.04] hover:text-white/80"
-              } disabled:cursor-not-allowed disabled:opacity-55`}
-              aria-pressed={active}
-            >
-              <LargeProviderIcon provider={option} />
-              <span className="font-medium">{providerLabel(option)}</span>
-            </button>
-          );
-        })}
+      <div className="mt-5 flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-white">
+        <LargeProviderIcon provider={provider} />
+        <span className="font-medium">{providerLabel(provider)}</span>
       </div>
       <button
         type="button"
         disabled={busy}
-        onClick={() => onProviderChange(selectedProvider)}
+        onClick={() => onProviderChange(provider)}
         className="mt-3 flex min-h-10 w-full items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.07] px-4 text-sm font-medium text-white transition-[transform,background-color,border-color,opacity] hover:border-white/[0.14] hover:bg-white/[0.11] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-55"
       >
-        {busy ? "Connecting..." : `Connect ${providerLabel(selectedProvider)}`}
+        {busy ? "Connecting..." : `Connect ${providerLabel(provider)}`}
       </button>
       {error && <div className="mt-3 rounded-lg border border-red-400/20 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">{error}</div>}
     </section>
@@ -1884,9 +1787,9 @@ function apiPathWithCwd(apiPath: string, cwd: string | null): string {
   return `${apiPath}${apiPath.includes("?") ? "&" : "?"}cwd=${encodeURIComponent(cwd)}`;
 }
 
-function resumeCommandForSession(session: ClaudeSessionSummary, workspaceCwd: string | null, provider: AgentProviderId = "claude"): string {
+function resumeCommandForSession(session: ClaudeSessionSummary, workspaceCwd: string | null, _provider: AgentProviderId = "opencode"): string {
   const cwd = session.cwd ?? workspaceCwd;
-  const resume = provider === "codex" ? `codex resume ${session.id}` : `claude --resume ${session.id}`;
+  const resume = `opencode -s ${session.id}`;
   return cwd
     ? `cd ${shellQuote(cwd)} && ${resume}`
     : resume;

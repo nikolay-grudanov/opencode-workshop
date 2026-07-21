@@ -33,7 +33,7 @@ export function useAgentProvider() {
   });
 
   return {
-    provider: query.data ?? "claude",
+    provider: query.data ?? "opencode",
     isLoading: query.isLoading,
     setProvider: mutation.mutateAsync,
   };

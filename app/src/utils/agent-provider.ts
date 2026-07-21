@@ -1,9 +1,9 @@
-export type AgentProviderId = "claude" | "codex";
+export type AgentProviderId = "opencode";
 
 export function isAgentProvider(value: unknown): value is AgentProviderId {
-  return value === "claude" || value === "codex";
+  return value === "opencode";
 }
 
-export function providerLabel(provider: AgentProviderId): string {
-  return provider === "codex" ? "Codex" : "Claude Code";
+export function providerLabel(_provider: AgentProviderId): string {
+  return "OpenCode";
 }
