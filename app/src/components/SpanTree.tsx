@@ -162,6 +162,42 @@ function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, 
   );
 }
 
+export type SpanViewMode = "flat" | "nested";
+
+function ViewModeToggle({ value, onChange }: { value: SpanViewMode; onChange: (mode: SpanViewMode) => void }) {
+  return (
+    <div
+      className="inline-flex items-center rounded"
+      style={{ background: "rgba(255,255,255,0.03)", border: `1px solid ${C.border}` }}
+      role="group"
+      aria-label="Span tree view mode"
+    >
+      {(["flat", "nested"] as const).map((m) => {
+        const active = value === m;
+        return (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onChange(m)}
+            className="text-[9px] uppercase tracking-wider font-medium transition-colors"
+            style={{
+              padding: "1px 6px",
+              color: active ? C.fg5 : C.fg0,
+              background: active ? "rgba(255,255,255,0.08)" : "transparent",
+              borderRadius: 2,
+              cursor: "pointer",
+            }}
+            aria-pressed={active}
+            title={m === "flat" ? "Flat view — chronological list" : "Nested view — hierarchical tree"}
+          >
+            {m === "flat" ? "Flat" : "Nested"}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 interface SpanTreeProps {
   spans: Span[];
   /** When set with `onSelectSpan`, selection is driven by the URL. */
@@ -172,6 +208,10 @@ interface SpanTreeProps {
   onClearFresh?: (id: string) => void;
   onCreateAnnotation?: (input: { span_id?: string | null; kind: AnnotationKind; note?: string; source?: "user" | "claude-code" }) => Promise<Annotation | null>;
   onDeleteAnnotation?: (id: string) => Promise<void>;
+  /** Flat (chronological list) vs nested (hierarchical tree) rendering. Defaults to "nested". */
+  viewMode?: SpanViewMode;
+  /** When set, viewMode is controlled by the parent (e.g. RunDetail). */
+  onViewModeChange?: (mode: SpanViewMode) => void;
 }
 
 interface ContextMenuState {
@@ -192,6 +232,8 @@ export function SpanTree({
   onClearFresh = () => {},
   onCreateAnnotation,
   onDeleteAnnotation,
+  viewMode: viewModeProp,
+  onViewModeChange,
 }: SpanTreeProps) {
   const controlled = onSelectSpan !== undefined;
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
@@ -200,6 +242,13 @@ export function SpanTree({
     if (controlled) onSelectSpan?.(id);
     else setInternalSelectedId(id);
   }, [controlled, onSelectSpan]);
+  const viewModeControlled = onViewModeChange !== undefined;
+  const [internalViewMode, setInternalViewMode] = useState<SpanViewMode>("nested");
+  const viewMode = viewModeControlled ? (viewModeProp ?? "nested") : internalViewMode;
+  const setViewMode = useCallback((mode: SpanViewMode) => {
+    if (viewModeControlled) onViewModeChange?.(mode);
+    else setInternalViewMode(mode);
+  }, [viewModeControlled, onViewModeChange]);
   const autoSelectedRunRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [addingForSpan, setAddingForSpan] = useState<string | null>(null);
@@ -325,6 +374,45 @@ export function SpanTree({
 
   // Recursive nested-DOM renderer (F-004.1): children render INSIDE the
   // parent's wrapper div, not as flat siblings. Wrapper div is load-bearing.
+  const renderSpanExtras = (span: Span, depth: number, spanAnnotations: Annotation[]): React.ReactNode => {
+    return (
+      <>
+        {addingForSpan === span.id && onCreateAnnotation && (
+          <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40 }}>
+            <InlineCreateForm
+              compact
+              onCancel={() => setAddingForSpan(null)}
+              onSubmit={async ({ kind, note }) => {
+                await onCreateAnnotation({ span_id: span.id, kind, note, source: "user" });
+                setAddingForSpan(null);
+              }}
+            />
+          </div>
+        )}
+        {selectedId === span.id && spanAnnotations.length > 0 && (
+          <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40, display: "flex", flexDirection: "column", gap: 4 }}>
+            {spanAnnotations.map((a) => {
+              const st = KIND_STYLES[a.kind];
+              return (
+                <div key={a.id} style={{ padding: "7px 9px", border: `1px solid ${st.border}`, background: `linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015)), ${st.bg}`, borderRadius: 8, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1, fontSize: 11, color: C.fg4, lineHeight: 1.45 }}>
+                    <span style={{ color: C.fg0, fontSize: 10, marginRight: 6 }}>
+                      {SOURCE_GLYPH[a.source]} {annotationSourceLabel(a.source)}
+                    </span>
+                    {a.note ? <DeepLinkedText text={a.note} /> : <em style={{ color: C.fg0 }}>(no note)</em>}
+                  </div>
+                  {onDeleteAnnotation && (
+                    <button onClick={(e) => { e.stopPropagation(); onDeleteAnnotation(a.id); }} title="Delete" style={{ background: "transparent", border: 0, color: C.fg0, fontSize: 13, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>×</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </>
+    );
+  };
+
   const renderNode = (span: Span, depth: number): React.ReactNode => {
     const kids = children.get(span.id) ?? [];
     const hasChildren = kids.length > 0;
@@ -347,40 +435,34 @@ export function SpanTree({
           childCount={kids.length}
           onChevronClick={hasChildren ? () => toggleExpand(span.id) : undefined}
         />
-        {addingForSpan === span.id && onCreateAnnotation && (
-          <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40 }}>
-            <InlineCreateForm
-              compact
-              onCancel={() => setAddingForSpan(null)}
-              onSubmit={async ({ kind, note }) => {
-                await onCreateAnnotation({ span_id: span.id, kind, note, source: "user" });
-                setAddingForSpan(null);
-              }}
-            />
-          </div>
-        )}
-        {/* Expanded annotation cards for this span when selected */}
-        {selectedId === span.id && spanAnnotations.length > 0 && (
-          <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40, display: "flex", flexDirection: "column", gap: 4 }}>
-            {spanAnnotations.map((a) => {
-              const st = KIND_STYLES[a.kind];
-              return (
-                <div key={a.id} style={{ padding: "7px 9px", border: `1px solid ${st.border}`, background: `linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015)), ${st.bg}`, borderRadius: 8, display: "flex", alignItems: "flex-start", gap: 8 }}>
-                  <div style={{ flex: 1, fontSize: 11, color: C.fg4, lineHeight: 1.45 }}>
-                    <span style={{ color: C.fg0, fontSize: 10, marginRight: 6 }}>
-                      {SOURCE_GLYPH[a.source]} {annotationSourceLabel(a.source)}
-                    </span>
-                    {a.note ? <DeepLinkedText text={a.note} /> : <em style={{ color: C.fg0 }}>(no note)</em>}
-                  </div>
-                  {onDeleteAnnotation && (
-                    <button onClick={(e) => { e.stopPropagation(); onDeleteAnnotation(a.id); }} title="Delete" style={{ background: "transparent", border: 0, color: C.fg0, fontSize: 13, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>×</button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {renderSpanExtras(span, depth, spanAnnotations)}
         {isExpanded && kids.map(kid => renderNode(kid, depth + 1))}
+      </div>
+    );
+  };
+
+  // Flat renderer (F-004.4): chronological list — no chevrons, no
+  // expand/collapse wrapper, no child-count badge. Depth still drives
+  // indentation so the original tree shape remains legible.
+  const renderFlatRow = (span: Span, depth: number): React.ReactNode => {
+    const spanAnnotations = annotationsBySpan.get(span.id) ?? [];
+    return (
+      <div key={span.id}>
+        <SpanRow
+          span={span} depth={depth}
+          minTime={minTime} totalDur={totalDur}
+          selected={span.id === selectedId}
+          flashing={span.id === flashId}
+          onClick={() => setSelectedId(span.id === selectedId ? null : span.id)}
+          onContextMenu={onCreateAnnotation ? (e, s) => setContextMenu({ spanId: s.id, x: e.clientX, y: e.clientY }) : undefined}
+          annotations={spanAnnotations}
+          freshIds={freshIds}
+          onClearFresh={onClearFresh}
+          subAgents={subAgents}
+          chevron={null}
+          childCount={0}
+        />
+        {renderSpanExtras(span, depth, spanAnnotations)}
       </div>
     );
   };
@@ -402,11 +484,17 @@ export function SpanTree({
           )}
           {/* Header */}
           <div className="flex items-center px-2 py-1.5 sticky top-0 z-10" style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
-            <div className="text-[9px] uppercase tracking-wider font-medium" style={{ color: C.fg0, width: 220 }}>Span</div>
+            <div className="flex items-center gap-2" style={{ width: 220 }}>
+              <div className="text-[9px] uppercase tracking-wider font-medium" style={{ color: C.fg0 }}>Span</div>
+              <ViewModeToggle value={viewMode} onChange={setViewMode} />
+            </div>
             <div className="flex-1 text-[9px] uppercase tracking-wider font-medium" style={{ color: C.fg0 }}>Timeline</div>
             <div className="text-[9px] uppercase tracking-wider font-medium text-right pr-3" style={{ color: C.fg0, width: 55 }}>Dur</div>
           </div>
-          {roots.map(root => renderNode(root, 0))}
+          {viewMode === "nested"
+            ? roots.map(root => renderNode(root, 0))
+            : flat.map(({ span, depth }) => renderFlatRow(span, depth))
+          }
         </div>
         {contextMenu && onCreateAnnotation && (
           <SpanContextMenu

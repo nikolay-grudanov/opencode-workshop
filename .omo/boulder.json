@@ -1,19 +1,35 @@
 {
   "schema_version": 2,
-  "active_work_id": null,
+  "active_work_id": "improve-spans-ui-phoenix-style-f004",
   "works": {
-    "remove-cloud-integration-f001": {
-      "work_id": "remove-cloud-integration-f001",
-      "active_plan": "openspec/changes/remove-cloud-integration-f001/tasks.md",
-      "plan_name": "remove-cloud-integration-f001",
+    "improve-spans-ui-phoenix-style-f004": {
+      "work_id": "improve-spans-ui-phoenix-style-f004",
+      "active_plan": "/home/gna/workspase/projects/opencode-workshop/openspec/changes/improve-spans-ui-phoenix-style-f004/tasks.md",
+      "plan_name": "improve-spans-ui-phoenix-style-f004",
+      "status": "active",
+      "started_at": "2026-07-21T12:28:53.046Z",
+      "updated_at": "2026-07-21T12:28:53.046Z",
       "session_ids": [
-        "opencode:ses_07fa2572affewdY2KPIQ4k11IN"
+        "opencode:ses_07b597c6affepa0XbONaOWUPad"
       ],
-      "status": "completed",
-      "worktree_path": null,
-      "started_at": "2026-07-20T16:30:49.563Z",
-      "ended_at": "2026-07-20T21:52:48.000Z",
-      "elapsed_ms": 19319765
+      "session_origins": {
+        "opencode:ses_07b597c6affepa0XbONaOWUPad": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
     }
-  }
+  },
+  "session_ids": [
+    "opencode:ses_07b597c6affepa0XbONaOWUPad"
+  ],
+  "session_origins": {
+    "opencode:ses_07b597c6affepa0XbONaOWUPad": "direct"
+  },
+  "task_sessions": {},
+  "active_plan": "/home/gna/workspase/projects/opencode-workshop/openspec/changes/improve-spans-ui-phoenix-style-f004/tasks.md",
+  "plan_name": "improve-spans-ui-phoenix-style-f004",
+  "status": "active",
+  "started_at": "2026-07-21T12:28:53.046Z",
+  "updated_at": "2026-07-21T12:28:53.046Z",
+  "agent": "atlas"
 }

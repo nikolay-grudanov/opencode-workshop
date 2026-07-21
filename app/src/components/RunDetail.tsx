@@ -15,7 +15,8 @@ import { StickToBottom, useStickToBottomContext, type StickToBottomContext } fro
 import { Dots } from "./Icons";
 import { Button } from "./Button";
 import { ChatFlow } from "./ChatFlow";
-import { SpanTree } from "./SpanTree";
+import { SpanTree, type SpanViewMode } from "./SpanTree";
+import { SessionTree } from "./SessionTree";
 import { ConvoDetail } from "./ConvoDetail";
 import { RemoteConvoLoader } from "../pages/SearchPage";
 import { RotateCcw, Bookmark, Pencil, ChevronDown, ArrowDown, ChevronRight, MessageCircle, SearchX } from "lucide-react";
@@ -1038,7 +1039,9 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
   const routeSelectedSpanId = routeSpanId ? decodeURIComponent(routeSpanId) : null;
   const [localTab, setLocalTab] = useState<"chat" | "tree" | "convo">("chat");
   const [localSelectedSpanId, setLocalSelectedSpanId] = useState<string | null>(null);
-  const activeTab = usesRouteState ? tab : localTab;
+  const [viewMode, setViewMode] = useState<SpanViewMode>("nested");
+  const [sessionsOverlayActive, setSessionsOverlayActive] = useState(false);
+  const activeTab = sessionsOverlayActive ? "sessions" : (usesRouteState ? tab : localTab);
   const selectedSpanId = usesRouteState ? routeSelectedSpanId : localSelectedSpanId;
   const [loading, setLoading] = useState(!initialData);
   const [notFound, setNotFound] = useState(false);
@@ -1074,17 +1077,23 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
   }, []);
 
   const goOverview = useCallback(() => {
+    setSessionsOverlayActive(false);
     if (routeBase) navigate(tracePath(routeBase, runId));
     else setLocalTab("chat");
   }, [navigate, routeBase, runId]);
   const goSpans = useCallback(() => {
+    setSessionsOverlayActive(false);
     if (routeBase) navigate(traceSpansPath(routeBase, runId));
     else setLocalTab("tree");
   }, [navigate, routeBase, runId]);
   const goConvo = useCallback(() => {
+    setSessionsOverlayActive(false);
     if (routeBase) navigate(traceConvoPath(routeBase, runId));
     else setLocalTab("convo");
   }, [navigate, routeBase, runId]);
+  const goSessions = useCallback(() => {
+    setSessionsOverlayActive(true);
+  }, []);
   const selectSpan = useCallback(
     (spanId: string | null) => {
       if (routeBase) {
@@ -1359,6 +1368,7 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
       <div className="flex-shrink-0 flex" style={{ borderBottom: `1px solid ${C.border}`, paddingLeft: 16 }}>
         <button style={tabStyle("chat")} onClick={goOverview}>Overview</button>
         <button style={tabStyle("tree")} onClick={goSpans}>Span Tree</button>
+        <button style={tabStyle("sessions")} onClick={goSessions}>Session Tree</button>
         {run.convo_id && (
           <button style={tabStyle("convo")} onClick={goConvo}>Convo</button>
         )}
@@ -1374,12 +1384,18 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
             onClearFresh={annotationsApi.clearFresh}
             onCreateAnnotation={createAnnotationAndSave}
             onDeleteAnnotation={annotationsApi.remove}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
           />
+        </div>
+      ) : activeTab === "sessions" ? (
+        <div className="flex-1 relative min-h-0 overflow-auto sb" style={{ padding: 16 }}>
+          <SessionTree subAgents={subAgents} spans={spans} onDiveIn={setFocusedAgent} />
         </div>
       ) : (
         <StickToBottom className="flex-1 relative min-h-0" resize="smooth" initial={false} contextRef={stickToBottomContextRef}>
           <StickToBottom.Content className="sb">
-            {activeTab === "chat" && <ChatFlow spans={spans} liveEvents={liveEvents} subAgents={subAgents} onDiveIn={setFocusedAgent} isActive={active} lastUpdatedAt={run.last_updated_at} onEditMessage={onForkStarted && !active ? (msg) => setEditModal({ userMessage: msg }) : undefined} replayError={replayMeta?.replay?.error ?? null} />}
+            {activeTab === "chat" && <ChatFlow spans={spans} liveEvents={liveEvents} subAgents={subAgents} onDiveIn={setFocusedAgent} isActive={active} lastUpdatedAt={run.last_updated_at} onEditMessage={onForkStarted && !active ? (msg) => setEditModal({ userMessage: msg }) : undefined} replayError={replayMeta?.replay?.error ?? null} viewMode={viewMode} />}
             {activeTab === "convo" && run.convo_id && (
               source === "cloud"
                 ? <RemoteConvoLoader convoId={run.convo_id} highlightEventId={runId} />

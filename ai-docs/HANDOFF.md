@@ -1,92 +1,148 @@
-# HANDOFF snapshot — opencode-workshop fork, started 2026-07-10
+# HANDOFF snapshot — opencode-workshop fork, session 2026-07-21
 
-> **For:** Kolya + next-session Miko.
-> **Read alongside:** [`PLAN.md`](PLAN.md) (active features + todos) and [`AGENTS.md`](AGENTS.md) (conventions).
-> **Mirror in Hindsight:** `mcp_hindsight_recall(query="handoff opencode-workshop 2026-07-10", budget="mid")` — backup.
+> **For:** Next-session Miko (after Z.ai quota reset).
+> **Read alongside:** [`PLAN.md`](PLAN.md) (live features + todos), [`AGENTS.md`](AGENTS.md) (conventions), root [`../AGENTS.md`](../AGENTS.md) (upstream build guide).
+> **Mirror in Hindsight:** `mcp_hindsight_recall(query="handoff opencode-workshop 2026-07-21", budget="mid")` — backup.
 
-## Current state (where we are)
+## TL;DR
 
-- **Repo (live on GitHub):** https://github.com/nikolay-grudanov/opencode-workshop
-- **Branch:** main
-- **HEAD:** `914d74d` (release v0.1.15, last upstream commit we pulled 2026-07-09)
-- **Local clone:** `/home/gna/workspase/projects/opencode-workshop/` (moved from `/home/gna/project/opencode-workshop/` 2026-07-10 — same reasoning as the plugin fork: `/tmp` is volatile, `~/project/` is the wrong prefix)
-- **Upstream remote:** `https://github.com/raindrop-ai/workshop.git`
-- **Latest tag:** v0.1.15
-- **Plugin companion:** `~/workspase/projects/opencode-workshop-plugin/` (`@grudanov-nikolay/opencode-workshop-plugin@0.1.0-kolya.6`, separate fork at `nikolay-grudanov/opencode-workshop-plugin`)
+Three OpenSpec changes in flight. **F003** (sub-agent visualization) and **F005** (HTML session export) are **committed**. **F004** (Phoenix-style spans UI) is **paused mid-Wave-2** because Z.ai GLM session-quota hit 100% — agents can't run. The orchestrator's own model is healthy, but `task()` has no `model` param, so we can't route subagents around the wall. Wait for Z.ai reset (~57m per quota widget / ~10:20 UTC per system reminder — discrepancy, take whichever fires first), then re-fire Wave-2 agents.
 
-## Scope of this fork (per Kolya's request 2026-07-10)
+- **HEAD:** `1201a2a` on `main`
+- **Branch:** `main` (no other branches in flight)
+- **Last 5 commits** (newest first):
+  - `1201a2a` fix: drop unused scope binding in init wizard
+  - `e69a50f` feat: add Export as HTML button to RunDetail header  *(F005 P3)*
+  - `7fd068b` feat: add GET /api/runs/:id/export endpoint  *(F005 P2)*
+  - `6af1a45` feat: add HTML session export pure helpers and test suite  *(F005 P1 — pre-existing playwright devDep rode along in this commit, intentional)*
+  - `7f14f7e` feat: visualise sub-agents in Span Tree  *(F003)*
 
-1. **Remove all Cloud Raindrop** — SaaS app, paid plans, OAuth, write-keys, cloud-MCP, API at `app.raindrop.ai`. Local daemon only.
-2. **Remove Codex + Claude Code integrations** — replace with OpenCode-only equivalents. Kolya doesn't use these.
-3. **Visualize OpenCode sub-agents** — `task` tool invocations should appear as named sub-agent cards in Workshop UI, with their conversation tree visible.
-4. **Phoenix-like spans UI** — proper OTel GenAI span tree, per-span latency bars, OTel JSON export option.
-5. **Self-contained HTML session export** — port `hermes-webui/api/session_export_html.py` (prototype) into Workshop. Standalone HTML, embedded CSS, no CDN, no remote images (signed-URL leak prevention).
+## What's done (committed)
 
-## What an agent should know upfront
+### F003 — Sub-agent visualization (`openspec/changes/add-subagent-visualization-f003/`)
+16 files. Canonical `detectSubAgents` consolidated to `src/agents.ts:48` (a 4th copy in `SearchPage.tsx` was in-spec to remove). Re-export shim appended to the **existing** `app/src/api/agents.ts` (agent-registry file — not a new file). `SpanRow` gained `attributes?: string | null`; `SubAgent` gained `subagent_name?: string` (kept in sync in both `src/agents.ts` and `app/src/utils/types.ts`).
 
-### Codebase facts (from 2026-07-10 reconnaissance)
+UI deltas:
+- `app/src/components/SpanTree.tsx` — `SUB_AGENT_ROOT: { color: "#d4a857", label: "AGENT" }` entry in TYPE_LABEL map (~line 49); `inferSpanTypeForDisplay` helper; friendly `Sub-agent: {subagent_name ?? "task N"}` labels; in-tree `SubAgentBlock` header (~line 427).
+- `app/src/components/FlameTimeline.tsx` — `#d4a857` tooltip badge (~line 10).
+- `app/src/components/SubAgentBlock.tsx` — new shared component, extracted from `ChatFlow.tsx:72`.
+- `app/tests-e2e/workshop-actions.spec.ts` — e2e assertions at line 213 (gold badge, friendly label, SubAgentBlock).
+- Unused `SubAgent` imports dropped from `app/src/api/query-api.ts` and `app/src/pages/SearchPage.tsx`.
+- `RunDetail.tsx` untouched — `SpanTree`/`FlameTimeline` call `detectSubAgents(spans)` internally.
 
-| Area | Status |
+### F005 — HTML session export (`openspec/changes/add-html-session-export-f005/`)
+3 commits, one per phase. **`src/server.ts` is Express-style** (not Hono as some task wording assumed).
+
+- **P1** (`6af1a45`): `package.json` +`markdown-it ^14.1.0` + `@types/markdown-it`; `src/export/html-export.ts` (~230 LOC: 5 pure helpers + `renderSessionHtml` + `ExportShape` interface; split light/dark CSS in `:root` / `:root.dark`; pre-neutralize raw `<img>` tags + `flattenLinksInImagePlaceholders` to defeat linkify-inside-placeholder); `tests/html-export.test.ts` (32 tests, all pass).
+- **P2** (`7fd068b`): `src/export/run-to-export-shape.ts` (~74 LOC, uses `(span as any).model` cast — pre-existing `getRunWithSpans` type limitation); `src/server.ts` adds `app.get("/api/runs/:id/export")`; `src/replay.ts` exposes `extractContext` (`export` keyword added).
+- **P3** (`e69a50f`): `app/src/components/ExportButton.tsx` (~30 LOC, `window.open` against `/api/runs/${runId}/export?theme=`); mounted in `app/src/pages/RunDetail.tsx` header before `MoreMenu`; F005 openspec dir created.
+
+Plus housekeeping:
+- `1201a2a` — `src/init.ts` lint fix (`scope` → `_scope`). Had to be a separate commit because the F005-P3 commit was already staged.
+
+### Verification status post-Wave-1
+- `bun x tsc --noEmit` (root tsconfig, daemon side) → exit 0
+- `bun run lint` → 0 errors, 3 pre-existing react-hooks-deps warnings (MessagePane/RunDetail/use-agents)
+- `bun test tests/html-export.test.ts` → 32/32 pass
+- `bun run build` → exit 0 (3.03s)
+
+### Tasks.md checkboxes still unchecked (intentional orchestrator skips)
+- **F003** (`add-subagent-visualization-f003/tasks.md`): commit task 7.7 flipped pre-commit; **remaining unchecked = daemon smokes only**: 7.6, 3.5, 4.5, 5.4, 6.3.
+- **F005** (`add-html-session-export-f005/tasks.md`): commits 1.10/2.9/3.7 flipped pre-commit; **remaining unchecked = daemon smokes only**: 2.7, 2.8, 3.5.
+
+If you run a real daemon later, you can flip those smoke-checkboxes and execute the smoke tests yourself — or leave them as documentation of "smoke-tested-via-curl" status.
+
+## What's in progress
+
+### F004 — Phoenix-style spans UI (`openspec/changes/improve-spans-ui-phoenix-style-f004/`)
+
+**Depends on F003** (the `#d4a857` SUB_AGENT_ROOT color lives in `SpanTree`/`FlameTimeline` type maps; F004-P1 moves it into the new `span-colors.ts` module — preserve, don't delete).
+
+**46 tasks in 5 phases:**
+- **P1 (1–10)** Unified span colour palette: new `app/src/utils/span-colors.ts` (`SPAN_TYPE_COLORS` + `spanColor()` with SUB_AGENT_ROOT `#d4a857`); extend `src/parse.ts:35–41` `inferSpanType` and `app/src/utils/types.ts` with `CHAIN`/`RETRIEVER`/`EMBEDDING`; rewire `SpanTree` + `FlameTimeline`; gut rotating palette in `app/src/utils/colors.ts`.
+- **P2 (11–20)** Nested SpanTree: recursive `Row` + chevrons `▸`/`▾` + expand/collapse `Map` (seeded `true`, reset on `runId` change) + child-count badges.
+- **P3 (21–29)** Tabbed SpanDetail: `Messages`/`Metadata` (Messages only for `LLM_GENERATION`, via `span.normalized.messages` + `MessageList` + `app/src/utils/messageParsing.ts`); role palette — system navy / user cool gray / assistant warm orange / tool neutral.
+- **P4 (30–38)** Flat|Nested toggle: `RunDetail.tsx` toggle + localStorage `workshop.spanViewMode` (malformed → `nested`); pass `viewMode` to `SpanTree` (flat=legacy) + `FlameTimeline` (flat=group by name, nested=group by `parent_span_id`).
+- **P5 (39–46)** Session tab: `RunView` enum +`"session"`; route `/runs/:runId/session` in `app/src/router.tsx:101–105`; Session tab between Span Tree and Convo in `RunDetail.tsx:1357–1362`; groups by parent/child with sub-agent display names.
+
+**Pre-committed commit messages** (use exactly):
+| Phase | Message |
 |---|---|
-| `src/cloud/` (11 files) | To remove — all SaaS code |
-| `src/auth/` (4 files) | Probably to remove — OAuth + write-key storage |
-| `src/codex-cli-chat.ts`, `src/codex-sessions.ts`, `src/claude-cli-chat.ts` | To remove |
-| `src/spans/adapters/claude-agent-sdk.ts` | To remove |
-| `src/spans/adapters/ai-sdk.ts`, `src/spans/adapters/livekit.ts`, `src/spans/adapters/types.ts` | **Keep** — generic |
-| `src/spans/normalize.ts`, `src/parse.ts`, `src/otlp-protobuf.ts` | **Keep** — already OTel-aware |
-| `src/agents.ts` (130 LOC) | **Already has sub-agent detection** (TOOL_CALL > LLM_GENERATION > TOOL_CALL pattern). Need to extend for `task` tool naming. |
-| `app/src/components/SpanTree.tsx`, `ChatFlow.tsx`, `MessagePane.tsx`, `RunDetail.tsx`, `SearchPage.tsx`, `SavedPage.tsx` | **Keep** — all already display sub-agents and spans |
-| `install.sh` | Has `raindrop cloud setup` step — needs cleanup |
-| `package.json` deps | `@raindrop-ai/ai-sdk ^0.0.24`, `@raindrop-ai/claude-agent-sdk ^0.0.10` (drop), `raindrop-ai ^0.0.89` (keep for daemon parts), `@ai-sdk/anthropic ^3.0.69` (drop in F-002), `@ai-sdk/openai ^3.0.26` (keep — OpenCode uses OpenAI-compatible providers) |
-| `examples/{claude-agent-sdk,anthropic-chat}/` | To remove (F-002) |
-| `examples/{ai-sdk-chat}/` | Keep — generic |
+| P1 | `feat: unify span colour palette across SpanTree and FlameTimeline` |
+| P2 | `feat: render SpanTree as nested DOM with chevrons and child-count badges` |
+| P3 | `feat: tabbed SpanDetail with role-specific message palette` |
+| P4 | `feat: Flat/Nested view-mode toggle with localStorage persistence` |
+| P5 | `feat: Session tree tab grouping spans by parent/child` *(body: `Refs F-004. Closes F-004. Depends on F-003 canonical SubAgent shape.`)* |
 
-### Existing F-005 prototype (THE input we should port)
+### Why paused
+Both initial Wave-2 agents (`bg_3ece0c78` P1+P2, `bg_c5043af9` P3) failed on `zai-coding-plan/glm-5.2` session-quota 100%. Auto-retry then failed on `opencode-go/glm-5.2` (also 100% rate-limited, 4h 08m reset). Two re-fired fresh agents (`bg_9ef3cfc8`, `bg_4c35cb40`) **also failed** on the same chain — their retry sessions (`ses_07da7d449ffeUb9j97Fe60jum0`, `ses_07da7d3bcffeh3UVGu4szrn17I`) are stuck on the doomed OpenCode Go fallback and **must NOT be resumed** when Z.ai resets.
 
-`/home/gna/hermes-webui/api/session_export_html.py` — 297 LOC. Pure functions, no hermes-webui-specific deps except `markdown_it`. Test at `tests/test_session_export_html_palette.py` (270 LOC).
+## Resume checklist (next session)
 
-**Key security pattern to reuse:** `_neutralize_remote_images()` — strips `<img src="https://...">` post-markdown-rendering, keeps only `data:` URIs. This prevents signed/private URL leaks when opening the saved HTML offline.
+1. **Check Z.ai alive.** Ask user to call `quota` or run it via MCP if available. If session quota shows >0%, proceed. If still 100%, ask user — wait again, or implement F004 directly via orchestrator's own model.
 
-### Upstream AGENTS.md (do not edit without explicit ask)
+2. **Run Wave 2 in parallel** — two fresh `task()` calls. Do NOT resume the dead `ses_07da7d44*` / `ses_07da7d3b*` sessions. Skip-list for BOTH agents:
+   - **Skip (leave unchecked):** commit tasks 10, 20, 29 + daemon smoke tests 9, 18, 19, 28.
+   - **No git mutations** (no commit / add / checkout / restore).
+   - **No `bun run build`** — orchestrator runs builds at wave boundaries.
+   - **No daemon start/restart/kill.**
+   - **No `as any` / `@ts-ignore` / `@ts-expect-error`.**
 
-Already at repo root. Tells the user-or-developer fork story (use `raindrop workshop start` vs `bun run dev`). Doesn't reference our kolya-fork work at all.
+   **Agent A — visual-engineering, P1+P2 (tasks 1–20).**
+   Owns: `app/src/utils/span-colors.ts` (new), `src/parse.ts`, `app/src/utils/types.ts`, `app/src/utils/colors.ts`, `app/src/components/SpanTree.tsx`, `app/src/components/FlameTimeline.tsx`.
+   Tell it: F003 is committed — SpanTree/FlameTimeline already have the gold `#d4a857` SUB_AGENT_ROOT badge, friendly labels, in-tree SubAgentBlock, and `inferSpanTypeForDisplay`. Preserve all of that. P1 just rewires colors onto the new `span-colors.ts` module while keeping `#d4a857` in `SPAN_TYPE_COLORS.SUB_AGENT_ROOT`. Verify with `bun x tsc --noEmit` + `bun run lint`.
 
-## Locked-in decisions (from Kolya + memory)
+   **Agent B — visual-engineering, P3 (tasks 21–29).**
+   Owns: `app/src/components/SpanDetail.tsx`, `app/src/components/MessageList.tsx`, `app/src/utils/messageParsing.ts`.
+   Tell it: F003 is committed — `src/agents.ts` is canonical `SubAgent` shape (re-exported via `app/src/api/agents.ts`); you don't need it but don't duplicate. F005 is committed — `src/replay.ts` exports `extractContext`; `attachNormalized` (in `src/db.ts`) populates `span.normalized` including LLM messages. Reuse those. If you need a message type that lives in `app/src/utils/types.ts`, **work around locally** — Agent A owns types.ts in parallel. Verify with `bun x tsc --noEmit` + `bun run lint`.
 
-- **No Cloud, no Codex, no Claude.** Confirmed 2026-07-10 by Kolya.
-- **Local Workshop daemon only.** Port 5899, runs as user (no PM2/tmux needed for now — `bun run dev` is fine).
-- **OpenCode plugin fork** (`@grudanov-nikolay/opencode-workshop-plugin@0.1.0-kolya.6`) is the producer of traces. Don't break its contract.
-- **No auto-commit/push.** Kolya must explicitly say "push" before any `git push`.
-- **No self-restart** of Workshop daemon or OpenCode without explicit OK.
-- **Best is enemy of good enough** — Kolya prefers small focused PRs (5-7 commits for F-001) over mega-PRs. Reference `kolya-dashboard` and plugin-fork multi-commit pattern.
-- **HTML export must be self-contained** — no CDN, no external assets, no remote images (signed URL leak prevention).
-- **`HERMES-WEBUI` `session_export_html.py` is the reference implementation, not the source** — port the logic, don't import (hermes-webui may not be in workshop's deps, and even if it is, we want to own the code).
+3. **Post-Wave-2 (orchestrator):** `bun x tsc --noEmit` + `bun run lint` + `bun test` + `bun run build`. Flip commit-task checkboxes pre-commit (10, 20, 29). Commit P1, P2, P3 separately with the exact messages above.
 
-## Miko's locked-in rules (DO NOT VIOLATE)
+4. **Wave 3 — F004 P4+P5 (tasks 30–46):** re-fire one or two visual-engineering agents in parallel. Skip-list: commits 38, 46 + daemon smokes 37, 44. P5 adds `/runs/:runId/session` route + Session tab in `RunDetail.tsx`. P5 commit body must be `Refs F-004. Closes F-004. Depends on F-003 canonical SubAgent shape.`
 
-- **NO SELF-RESTART** — even if the daemon looks broken, ask Kolya before restarting.
-- **NO delete-confirmation** — `npm install / rm / git reset` etc. all require explicit "ok", "go", "delete".
-- **Don't speculate about root causes** — verify with status endpoints / curl before writing memory.
-- **Worker honesty** — multi-agent workers (Hermes, Claude Code, Spec-Kit, opencode subagents) historically lie about task completion; always verify branches, commits, and merges yourself.
+5. **Final:** full verification (build + lint + tsc + tests), commit P4 + P5, archive the three OpenSpec changes via `openspec-archive-change`, run `graphify update .`, write final report to `PLAN.md`.
 
-## What I have NOT done yet (still pending)
+## Known gotchas (do NOT fix in this session, leave for explicit ask)
 
-- ❌ **F-001** (remove cloud) — planned but not started. Will need ~5 commits per Kolya's preferred pattern (rm → fix imports → verify).
-- ❌ **F-002** (remove Codex/Claude) — planned but not started.
-- ❌ **F-003** (sub-agent UI for `task` tool) — partial UI exists, need plugin-side metadata patch + UI extension.
-- ❌ **F-004** (Phoenix-like spans) — mostly already in place, polish-only.
-- ❌ **F-005** (HTML export) — port from `hermes-webui`, partial plan.
-- ❌ **No commits yet** for this repo in this session — waiting for Kolya's "go" on F-001.
+- **Pre-existing app-side tsc issues:**
+  - `lucide-react` and `react-router-dom` have React-19 JSX type incompatibilities.
+  - `app/src/pages/SavedPage.tsx:1094` has a missing `Run` import.
+  - Root `bun x tsc --noEmit` only checks root `src/` (tsconfig include) — these app issues won't surface from root. Use `cd app && bun x tsc --noEmit` to see them.
+- **`src/server.ts` is Express-style** (`app.get("/api/runs/:id/export")`), not Hono. Some OpenSpec task wording assumed Hono.
+- **Pre-existing dirty state (NOT yours, never stage/revert):**
+  - `M bun.lock + package.json` (playwright 1.60.0 devDep from prior e2e work — landed in F005-P1 commit because Bun bundled them together)
+  - `M oh-my-openagent.json`
+  - `D f001/f002` change files
+  - untracked `.opencode/oh-my-openagent.json`, `openspec/changes/{f003,f004,f005,archive}`, `openspec/specs`
+- **`src/agents.ts` is the canonical SubAgent shape**; `app/src/utils/types.ts` mirrors it. When extending, keep both in sync.
 
-## Cross-session anchor for Hindsight
+## Todos snapshot (from orchestrator)
 
-If you're a new session, run:
-```
-mcp_hindsight_recall(query="handoff opencode-workshop 2026-07-10 Kolya fork plan", budget="mid")
-```
+| Status | Content |
+|---|---|
+| completed | Wave-1a: Delegate F003 to visual-engineering |
+| completed | Wave-1b: Delegate F005 to unspecified-high |
+| completed | Post-Wave-1: Verify + commit F003+F005, compress |
+| **in_progress** | Wave-2a: Delegate F004 P1+P2 (after F003) |
+| **in_progress** | Wave-2b: Delegate F004 P3 |
+| pending | Post-Wave-2: Verify + commit F004 P1–P3 |
+| pending | Wave-3: Delegate F004 P4+P5 |
+| pending | Final: full verify, commit P4–P5, archive, graphify, final report |
 
-This should surface both this HANDOFF.md context and the earlier plugin-fork handoff (`handoff opencode-workshop-plugin 2026-07-09`).
+## Reference files (read in this order if fresh)
+
+1. Root `AGENTS.md` — upstream build/dev guide, user-vs-developer fork.
+2. `ai-docs/AGENTS.md` — Kolya's fork conventions, Miko rules.
+3. `ai-docs/PLAN.md` — live plan + todos (single source of truth per AGENTS.md).
+4. This file — what's done, what's blocked.
+5. `openspec/changes/improve-spans-ui-phoenix-style-f004/{proposal.md, design.md, tasks.md, specs/}` — canonical F004 spec.
+6. `openspec/changes/add-subagent-visualization-f003/tasks.md` — F003 (mostly done).
+7. `openspec/changes/add-html-session-export-f005/tasks.md` — F005 (mostly done).
+8. `graphify-out/GRAPH_REPORT.md` — codebase knowledge graph (run `graphify update .` after code changes).
+9. `ai-docs/ARCHITECTURE.md` — system architecture.
+10. `ai-docs/DEVELOPMENT.md` — dev env, scripts, lint/typecheck commands.
 
 ---
 
-*Maintained by Miko (Hermes Agent). Created 2026-07-10 00:30 MSK.*
+*Maintained by Miko (Sisyphus / MiniMax-M3 orchestrator). Updated 2026-07-21 04:25 MSK.*
+*Original handoff: 2026-07-10 00:30 MSK (kickoff snapshot, replaced).*

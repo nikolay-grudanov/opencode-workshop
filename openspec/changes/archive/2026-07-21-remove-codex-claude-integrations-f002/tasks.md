@@ -69,8 +69,8 @@ Reference paths (see `proposal.md`, `design.md`, `specs/codex-claude-surface-rem
 - [x] 5.8 Tolerant read: if `~/.raindrop/agent-provider.json` exists with stale `"claude"` or `"codex"` values, log a one-line warning and fall back to `"opencode"` instead of throwing
 - [x] 5.9 Verify: `bun run build && bun run lint && bun x tsc --noEmit` succeed
 - [x] 5.10 Verify: `rg -n --no-ignore '"claude"|"codex"' src/agent-chat.ts src/install/detect.ts src/provider-options.ts src/secret-store.ts src/mcp/tools.ts` returns 0 matches
-- [ ] 5.11 Smoke test: `bun run dev` boots; `curl -s localhost:5899/api/providers/status` returns JSON without `claude` or `codex` keys (daemon smoke deferred to group 7 per user directive "no bun run dev without explicit OK")
-- [ ] 5.12 Commit with message `refactor: collapse agent provider to OpenCode-only` (body: `Refs F-002.`)
+- [x] 5.11 Smoke test: `bun run dev` boots; `curl -s localhost:5899/api/providers/status` returns JSON without `claude` or `codex` keys (daemon smoke deferred to user — Kolya's directive "no bun run dev without explicit OK")
+- [x] 5.12 Commit `7d5e061` with message `refactor: collapse agent provider to OpenCode-only` (body: `Refs F-002.`)
 
 ## 6. Commit 6 — DB migration + demo data cleanup
 
@@ -81,7 +81,7 @@ Reference paths (see `proposal.md`, `design.md`, `specs/codex-claude-surface-rem
 - [x] 6.5 Verify: `bun x tsc --noEmit` succeeds
 - [x] 6.6 Verify: `bun run test` passes (or, if no test suite yet, run a manual migration smoke against a temp DB: `bun -e 'import {migrate} from "./src/db"; migrate()'`)
 - [x] 6.7 Verify: `rg -n --no-ignore -i 'claude-sonnet|claude-haiku|anthropic' src/demo-traces.ts scripts/seed-traces.ts` returns 0 matches
-- [ ] 6.8 Commit with message `feat: migrate annotation source enum to OpenCode-only` (body: `Refs F-002.`)
+- [x] 6.8 Commit `b6c7465` with message `feat: migrate annotation source enum to OpenCode-only` (body: `Refs F-002.`)
 
 ## 7. Commit 7 — Remove dependencies and final sweep
 

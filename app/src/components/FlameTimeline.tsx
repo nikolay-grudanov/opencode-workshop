@@ -5,6 +5,7 @@ import { SPAN_TYPE_COLORS, SPAN_TYPE_LABELS, spanTypeFromRaw } from "../utils/sp
 import { fmt, tryJson } from "../utils/helpers";
 import type { Span, SubAgent } from "../utils/types";
 import { detectSubAgents } from "../api/agents";
+import type { SpanViewMode } from "./SpanTree";
 
 function spanTypeInfo(span: Span, subAgents: SubAgent[]): { color: string; label: string } {
   if (span.span_type === "TOOL_CALL" && subAgents.some(s => s.root_span_id === span.id)) {
@@ -153,7 +154,7 @@ function SpanTooltip({
   );
 }
 
-export function FlameTimeline({ spans }: { spans: Span[] }) {
+export function FlameTimeline({ spans, viewMode = "nested" }: { spans: Span[]; viewMode?: SpanViewMode }) {
   const vizSpans = useMemo(() => spans.filter(s => s.span_type === "TRACE" || s.span_type === "TOOL_CALL" || s.span_type?.includes("LLM")), [spans]);
   const subAgents = useMemo(() => detectSubAgents(spans), [spans]);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -161,6 +162,7 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
   const [hovered, setHovered] = useState<{ span: Span; rect: DOMRect } | null>(null);
   const [hoveredLabelName, setHoveredLabelName] = useState<string | null>(null);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFlat = viewMode === "flat";
 
   const cancelTooltipDismiss = useCallback(() => {
     if (leaveTimerRef.current != null) {
@@ -237,16 +239,21 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
   const AXIS_H = 22;
   const MIN_PX_PER_MS = 0.005;
 
-  const longestNameLen = toolNames.reduce((m, n) => Math.max(m, n.length), 0);
+  const flatLabel = "Timeline";
+  const labelSourceNames = isFlat ? [flatLabel] : toolNames;
+  const longestNameLen = labelSourceNames.reduce((m, n) => Math.max(m, n.length), 0);
   const widthFromContent = Math.ceil(longestNameLen * LABEL_CHAR_PX + LABEL_PAD);
   const maxLabelByContainer =
     containerW > 0 ? Math.min(MAX_LABEL_W, Math.floor(containerW * 0.46)) : MAX_LABEL_W;
   const labelW = Math.max(MIN_LABEL_W, Math.min(widthFromContent, maxLabelByContainer));
   const labelColumnCapped = widthFromContent > maxLabelByContainer;
-  const totalH = toolNames.length * ROW + AXIS_H;
+  const rowCount = isFlat ? 1 : toolNames.length;
+  const totalH = rowCount * ROW + AXIS_H;
   const scrollViewportW = Math.max((containerW || 300) - labelW, 160);
   const chartW = Math.max(scrollViewportW, dur * MIN_PX_PER_MS);
   const pxPerMs = chartW / dur;
+
+  const rowOfSpan = (span: Span): number => (isFlat ? 0 : toolNames.indexOf(span.name));
 
   const gridIntervals = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000];
   const targetGrids = Math.floor(chartW / 90);
@@ -265,7 +272,15 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
       <div style={{ display: "flex", height: totalH }}>
         {/* Labels */}
         <div style={{ width: labelW, flexShrink: 0 }}>
-          {toolNames.map(name => {
+          {isFlat ? (
+            <div
+              className="flex items-center px-3 text-[10px] font-mono min-w-0 whitespace-nowrap"
+              style={{ height: ROW, color: C.fg0 }}
+              title={flatLabel}
+            >
+              {flatLabel}
+            </div>
+          ) : toolNames.map(name => {
             const firstToolSpan = firstToolSpanByName.get(name);
             const labelHovered = hoveredLabelName === name;
             const firstSpanForColor = firstToolSpan ?? vizSpans.find(s => s.name === name);
@@ -336,7 +351,7 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
 
           {/* Bars */}
           {vizSpans.map((span, idx) => {
-            const row = toolNames.indexOf(span.name);
+            const row = rowOfSpan(span);
             const left = (span.start_time_ms - minT) * pxPerMs;
             const w = Math.max((span.end_time_ms - span.start_time_ms) * pxPerMs, BAR_H);
             const color = span.span_type?.includes("LLM") ? LLM_BAR_COLOR : SPAN_TYPE_COLORS[spanTypeFromRaw(span.span_type)];

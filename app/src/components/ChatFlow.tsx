@@ -4,6 +4,7 @@ import { C, spanColor } from "../utils/colors";
 import { argsPreview, trunc, tryJson } from "../utils/helpers";
 import type { LiveEvent, Span, SubAgent } from "../utils/types";
 import { FlameTimeline } from "./FlameTimeline";
+import type { SpanViewMode } from "./SpanTree";
 import { AlertCircle, Check, Dots, Spinner } from "./Icons";
 import { Markdown } from "./Markdown";
 import { MessageList, messagesFromSpan } from "./MessageList";
@@ -285,8 +286,8 @@ function LLMErrorBanner({ content }: { content: string }) {
 const RENDER_MODE_KEY = "rd_llm_render_mode";
 const EMPTY_SUB_AGENTS: SubAgent[] = [];
 
-export function ChatFlow({ spans, liveEvents, subAgents = EMPTY_SUB_AGENTS, onDiveIn, isActive, lastUpdatedAt, onEditMessage, replayError }: {
-  spans: Span[]; liveEvents: LiveEvent[]; subAgents?: SubAgent[]; onDiveIn?: (rootSpanId: string) => void; isActive?: boolean; lastUpdatedAt?: number; onEditMessage?: (content: string) => void; replayError?: { code: string; message: string } | null;
+export function ChatFlow({ spans, liveEvents, subAgents = EMPTY_SUB_AGENTS, onDiveIn, isActive, lastUpdatedAt, onEditMessage, replayError, viewMode }: {
+  spans: Span[]; liveEvents: LiveEvent[]; subAgents?: SubAgent[]; onDiveIn?: (rootSpanId: string) => void; isActive?: boolean; lastUpdatedAt?: number; onEditMessage?: (content: string) => void; replayError?: { code: string; message: string } | null; viewMode?: SpanViewMode;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const colorMap = useMemo(() => new Map<string, string>(), []);
@@ -495,7 +496,7 @@ export function ChatFlow({ spans, liveEvents, subAgents = EMPTY_SUB_AGENTS, onDi
 
   return (
     <div ref={scrollRef} className="space-y-1.5 py-2 pb-24">
-      <div className="px-3"><FlameTimeline spans={spans} /></div>
+      <div className="px-3"><FlameTimeline spans={spans} viewMode={viewMode} /></div>
       {(() => { let seenLLM = false; return items.map((item, i) => {
         const isFirstLLM = hasLLMOutput && item.type === "llm_out" && !seenLLM;
         if (item.type === "llm_out") seenLLM = true;
