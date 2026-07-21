@@ -209,3 +209,36 @@ test("workshop UI: deleting a run via API removes it from the sidebar", async ({
   // not a stealth `clearAll`.
   await expect.poll(async () => page.locator("[data-run-id]").count(), { timeout: 5_000 }).toBe(2);
 });
+
+test("workshop UI: sub-agent root span shows gold badge, friendly label, and in-tree SubAgentBlock", async ({ page, workshop }) => {
+  await seedFixtures(workshop.url);
+
+  // Fixture 3 has a sub-agent: TOOL_CALL "subagent.review" > LLM > TOOL_CALL (Pattern 1).
+  const RUN_B = "00000000000000000000000000000003";
+  const dbSpans = await readWorkshopSpans(workshop.url, RUN_B);
+  const subAgentRoot = dbSpans.find((s) => s.name === "subagent.review");
+  expect(subAgentRoot, "expected subagent.review span in fixture 3").toBeTruthy();
+
+  await page.goto(`${workshop.url}/runs/${RUN_B}`);
+  await page.getByRole("button", { name: /^span tree$/i }).click();
+
+  // (1) Gold #d4a857 badge on the sub-agent root row, distinct from TOOL_CALL #b08c5a.
+  const rootRow = page.locator(`[data-span-row="${subAgentRoot!.id}"]`);
+  await expect(rootRow).toBeVisible({ timeout: 10_000 });
+  const badge = rootRow.locator("span.text-\\[10px\\]").first();
+  const badgeColor = await badge.evaluate((el) => getComputedStyle(el).color);
+  expect(badgeColor).toBe("rgb(212, 168, 87)");
+
+  // (2) AGENT badge label (not generic TOOL). "task"-named roots would show "Sub-agent: ...";
+  // this fixture uses "subagent.review" (Pattern 1), so the raw name is preserved.
+  const badgeLabel = await badge.textContent();
+  expect(badgeLabel?.trim()).toBe("AGENT");
+
+  // (3) In-tree SubAgentBlock visible when sub-agents exist, absent when they don't.
+  const subAgentBlock = page.locator('[data-testid="span-tree-subagent-block"]');
+  await expect(subAgentBlock).toBeVisible({ timeout: 5_000 });
+
+  await page.locator(`[data-run-id="${FIXTURE_RUN_ID}"]`).click();
+  await page.getByRole("button", { name: /^span tree$/i }).click();
+  await expect(subAgentBlock).toHaveCount(0, { timeout: 5_000 });
+});

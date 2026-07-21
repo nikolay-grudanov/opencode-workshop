@@ -2,9 +2,13 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Copy, Check } from "lucide-react";
 import { C, spanColor } from "../utils/colors";
 import { fmt, tryJson } from "../utils/helpers";
-import type { Span } from "../utils/types";
+import type { Span, SubAgent } from "../utils/types";
+import { detectSubAgents } from "../api/agents";
 
-function spanTypeInfo(span: Span): { color: string; label: string } {
+function spanTypeInfo(span: Span, subAgents: SubAgent[]): { color: string; label: string } {
+  if (span.span_type === "TOOL_CALL" && subAgents.some(s => s.root_span_id === span.id)) {
+    return { color: "#d4a857", label: "AGENT" };
+  }
   if (span.span_type === "TRACE") return { color: C.purple, label: "TRACE" };
   if (span.span_type === "TOOL_CALL") return { color: "#b08c5a", label: "TOOL" };
   if (span.span_type?.includes("LLM")) return { color: C.fg1, label: "LLM" };
@@ -71,11 +75,13 @@ function SpanTooltip({
   barRect,
   onPointerEnter,
   onPointerLeave,
+  subAgents,
 }: {
   span: Span;
   barRect: DOMRect;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
+  subAgents: SubAgent[];
 }) {
   const W = 320;
   const H = 480;
@@ -91,7 +97,7 @@ function SpanTooltip({
   top = Math.max(pad, Math.min(top, vh - maxH - pad));
 
   const isErr = span.status === "ERROR";
-  const type = spanTypeInfo(span);
+  const type = spanTypeInfo(span, subAgents);
   const inTok = span.input_tokens ?? 0;
   const outTok = span.output_tokens ?? 0;
   const inputRaw = span.input_payload?.trim() ?? "";
@@ -151,6 +157,7 @@ function SpanTooltip({
 export function FlameTimeline({ spans }: { spans: Span[] }) {
   const colorMap = useMemo(() => new Map<string, string>(), []);
   const vizSpans = useMemo(() => spans.filter(s => s.span_type === "TRACE" || s.span_type === "TOOL_CALL" || s.span_type?.includes("LLM")), [spans]);
+  const subAgents = useMemo(() => detectSubAgents(spans), [spans]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerW, setContainerW] = useState(0);
   const [hovered, setHovered] = useState<{ span: Span; rect: DOMRect } | null>(null);
@@ -387,6 +394,7 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
           barRect={hovered.rect}
           onPointerEnter={cancelTooltipDismiss}
           onPointerLeave={scheduleTooltipDismiss}
+          subAgents={subAgents}
         />
       )}
     </div>

@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { C } from "../utils/colors";
 import { fmt, tryJson, detectProvider } from "../utils/helpers";
-import type { Span } from "../utils/types";
+import type { Span, SubAgent } from "../utils/types";
+import { detectSubAgents } from "../api/agents";
 import { Chevron } from "./Icons";
+import { SubAgentBlock } from "./SubAgentBlock";
 import { JsonView } from "./JsonView";
 import { AnnotationChip, KIND_STYLES, SOURCE_GLYPH, annotationSourceLabel } from "./AnnotationChip";
 import { InlineCreateForm } from "./TraceAnnotations";
@@ -44,6 +46,7 @@ function CopyButton({ text }: { text: string }) {
 const TYPE_LABEL: Record<string, { color: string; label: string }> = {
   TRACE: { color: C.purple, label: "TRACE" },
   TOOL_CALL: { color: "#b08c5a", label: "TOOL" },
+  SUB_AGENT_ROOT: { color: "#d4a857", label: "AGENT" },
   LLM_GENERATION: { color: "#5a8ab0", label: "LLM" },
   INTERNAL: { color: C.fg0, label: "SPAN" },
 };
@@ -55,19 +58,38 @@ function typeInfo(span: Span) {
   return TYPE_LABEL.INTERNAL;
 }
 
-function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, onContextMenu, annotations, freshIds, onClearFresh }: {
+function inferSpanTypeForDisplay(span: Span, subAgents: SubAgent[]): { color: string; label: string } {
+  if (span.span_type === "TOOL_CALL" && subAgents.some(s => s.root_span_id === span.id)) {
+    return TYPE_LABEL.SUB_AGENT_ROOT;
+  }
+  return typeInfo(span);
+}
+
+function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, onContextMenu, annotations, freshIds, onClearFresh, subAgents }: {
   span: Span; depth: number; minTime: number; totalDur: number;
   selected: boolean; flashing: boolean; onClick: () => void;
   onContextMenu?: (e: React.MouseEvent, span: Span) => void;
   annotations: Annotation[];
   freshIds: Set<string>;
   onClearFresh: (id: string) => void;
+  subAgents: SubAgent[];
 }) {
-  const info = typeInfo(span);
+  const info = inferSpanTypeForDisplay(span, subAgents);
   const color = info.color;
   const isErr = span.status === "ERROR";
   const leftPct = totalDur > 0 ? ((span.start_time_ms - minTime) / totalDur) * 100 : 0;
   const widthPct = totalDur > 0 ? Math.max((span.duration_ms / totalDur) * 100, 0.5) : 100;
+
+  const subAgentIndex = subAgents.findIndex(s => s.root_span_id === span.id);
+  const subAgent = subAgentIndex >= 0 ? subAgents[subAgentIndex] : null;
+  let displayLabel = span.name;
+  if (subAgent) {
+    if (span.name === "task") {
+      displayLabel = `Sub-agent: ${subAgent.subagent_name ?? `task ${subAgentIndex + 1}`}`;
+    } else if (subAgent.subagent_name) {
+      displayLabel = `${span.name}: ${subAgent.subagent_name}`;
+    }
+  }
 
   return (
     <div
@@ -87,8 +109,8 @@ function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, 
         <span className="text-[10px] font-mono font-bold px-1 py-0.5 rounded" style={{ color: info.color, background: `${info.color}12` }}>
           {info.label}
         </span>
-        <span className="text-[11px] font-mono truncate" style={{ color: isErr ? C.red : C.fg3 }} title={span.name}>
-          {span.name}
+        <span className="text-[11px] font-mono truncate" style={{ color: isErr ? C.red : C.fg3 }} title={displayLabel}>
+          {displayLabel}
         </span>
         {annotations.map((a) => (
           <AnnotationChip
@@ -378,6 +400,8 @@ export function SpanTree({
     else { const c = children.get(s.parent_span_id) ?? []; c.push(s); children.set(s.parent_span_id, c); }
   }
 
+  const subAgents = useMemo(() => detectSubAgents(spans), [spans]);
+
   const flat: { span: Span; depth: number }[] = [];
   function walk(span: Span, depth: number) {
     flat.push({ span, depth });
@@ -398,6 +422,14 @@ export function SpanTree({
       <div className="flex flex-1 min-h-0">
         {/* Left: span list */}
         <div className="overflow-auto sb" style={{ flex: selectedSpan ? "0 0 50%" : "1 1 auto", borderRight: selectedSpan ? `1px solid ${C.border}` : "none" }}>
+          {subAgents.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5" style={{ borderBottom: `1px solid ${C.border}`, background: "rgba(212,168,87,0.04)" }} data-testid="span-tree-subagent-block">
+              <span className="text-[9px] uppercase tracking-wider font-medium" style={{ color: "#d4a857" }}>Sub-agents</span>
+              {subAgents.map((agent) => (
+                <SubAgentBlock key={agent.root_span_id} agent={agent} spans={spans} />
+              ))}
+            </div>
+          )}
           {/* Header */}
           <div className="flex items-center px-2 py-1.5 sticky top-0 z-10" style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
             <div className="text-[9px] uppercase tracking-wider font-medium" style={{ color: C.fg0, width: 220 }}>Span</div>
@@ -416,6 +448,7 @@ export function SpanTree({
                 annotations={annotationsBySpan.get(span.id) ?? []}
                 freshIds={freshIds}
                 onClearFresh={onClearFresh}
+                subAgents={subAgents}
               />
               {addingForSpan === span.id && onCreateAnnotation && (
                 <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40 }}>

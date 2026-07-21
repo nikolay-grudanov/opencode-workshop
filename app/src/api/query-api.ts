@@ -3,7 +3,7 @@ import {
   getCachedCloudTraceSpans,
   setCloudTraceCache,
 } from "./saved-runs";
-import type { Run, Span, SubAgent } from "../utils/types";
+import type { Run, Span } from "../utils/types";
 
 const signalSchema = z.object({
   id: z.string(),
@@ -170,67 +170,4 @@ export function mapTraceToSpans(traces: TraceSpan[], eventId: string): Span[] {
   });
 }
 
-export function detectSubAgents(spans: Span[]): SubAgent[] {
-  const children = new Map<string, Span[]>();
-  const spanMap = new Map<string, Span>();
-  for (const s of spans) {
-    spanMap.set(s.id, s);
-    if (s.parent_span_id) {
-      const kids = children.get(s.parent_span_id) ?? [];
-      kids.push(s);
-      children.set(s.parent_span_id, kids);
-    }
-  }
-
-  const agents: SubAgent[] = [];
-  for (const span of spans) {
-    if (span.span_type !== "TOOL_CALL") continue;
-    const kids = children.get(span.id) ?? [];
-    const llmKids = kids.filter(k => k.span_type?.includes("LLM"));
-    let hasAgenticLoop = false;
-    for (const llm of llmKids) {
-      const grandkids = children.get(llm.id) ?? [];
-      if (grandkids.some(g => g.span_type === "TOOL_CALL")) { hasAgenticLoop = true; break; }
-      if (llm.name === "agent.subagent") { hasAgenticLoop = true; break; }
-    }
-    if (!hasAgenticLoop) continue;
-
-    const allSpanIds: string[] = [];
-    const collected = new Set<string>();
-    let llmCount = 0, toolCount = 0, totalIn = 0, totalOut = 0;
-    let model: string | null = null;
-    function collect(id: string) {
-      if (collected.has(id)) return;
-      collected.add(id);
-      allSpanIds.push(id);
-      const s = spanMap.get(id);
-      if (s) {
-        if (s.span_type?.includes("LLM")) {
-          llmCount++;
-          if (!model && s.model) model = s.model;
-          totalIn += s.input_tokens ?? 0;
-          totalOut += s.output_tokens ?? 0;
-        }
-        if (s.span_type === "TOOL_CALL" && s.id !== span.id) toolCount++;
-      }
-      for (const kid of children.get(id) ?? []) collect(kid.id);
-    }
-    collect(span.id);
-
-    agents.push({
-      root_span_id: span.id,
-      name: span.name,
-      span_ids: allSpanIds,
-      start_time_ms: span.start_time_ms,
-      end_time_ms: span.end_time_ms,
-      duration_ms: span.duration_ms,
-      model,
-      status: span.status,
-      llm_count: llmCount,
-      tool_count: toolCount,
-      total_input_tokens: totalIn,
-      total_output_tokens: totalOut,
-    });
-  }
-  return agents;
-}
+export { detectSubAgents } from "./agents";

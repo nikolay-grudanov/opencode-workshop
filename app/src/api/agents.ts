@@ -1,6 +1,10 @@
 import { apiJson, apiJsonOrNull, jsonInit } from "./request";
 import { isAgentProvider, type AgentProviderId } from "../utils/agent-provider";
 
+// Canonical detectSubAgents lives in src/agents.ts; re-exported here so client
+// call-sites import from a single location (F-003 consolidation).
+export { detectSubAgents } from "../../../src/agents";
+
 export interface AgentEntry {
   url?: string;
   cwd?: string;

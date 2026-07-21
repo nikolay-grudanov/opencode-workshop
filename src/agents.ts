@@ -20,6 +20,8 @@ interface SpanRow {
   status: string;
   input_tokens: number | null;
   output_tokens: number | null;
+  /** OTLP attributes JSON blob; present on client-side Span[] rows. */
+  attributes?: string | null;
 }
 
 export interface SubAgent {
@@ -27,6 +29,8 @@ export interface SubAgent {
   root_span_id: string;
   /** Name of the tool / agent */
   name: string;
+  /** Sub-agent display name from the LLM child's `attributes.subagent_name` (plugin F-010). */
+  subagent_name?: string;
   /** All span IDs that belong to this sub-agent (including the root) */
   span_ids: string[];
   start_time_ms: number;
@@ -67,18 +71,26 @@ export function detectSubAgents(spans: SpanRow[]): SubAgent[] {
     const kids = children.get(span.id) ?? [];
     const llmKids = kids.filter(k => k.span_type?.includes("LLM"));
     let hasAgenticLoop = false;
+    let subagentName: string | undefined;
     for (const llm of llmKids) {
       // Pattern 1: LLM child has TOOL grandchildren
       const grandkids = children.get(llm.id) ?? [];
       if (grandkids.some(g => g.span_type === "TOOL_CALL")) {
         hasAgenticLoop = true;
-        break;
       }
       // Pattern 2: LLM child is explicitly named as a sub-agent
       if (llm.name === "agent.subagent") {
         hasAgenticLoop = true;
-        break;
       }
+      // Read subagent_name from the LLM child's attributes (plugin F-010 contract).
+      if (!subagentName && llm.attributes) {
+        try {
+          const attrs = JSON.parse(llm.attributes) as Record<string, unknown>;
+          const v = attrs["subagent_name"];
+          if (typeof v === "string" && v.length > 0) subagentName = v;
+        } catch {}
+      }
+      if (hasAgenticLoop && subagentName) break;
     }
 
     if (!hasAgenticLoop) continue;
@@ -113,6 +125,7 @@ export function detectSubAgents(spans: SpanRow[]): SubAgent[] {
     agents.push({
       root_span_id: span.id,
       name: span.name,
+      subagent_name: subagentName,
       span_ids: allSpanIds,
       start_time_ms: span.start_time_ms,
       end_time_ms: span.end_time_ms,

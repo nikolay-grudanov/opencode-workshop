@@ -1006,6 +1006,7 @@ function SavedRunDetail({ event }: { event: SavedEvent }) {
 
 // Inline cloud trace viewer — same as RemoteRunDetail in SearchPage but standalone
 import type { Span, SubAgent } from "../utils/types";
+import { detectSubAgents } from "../api/agents";
 
 interface TraceSpan {
   trace_id: string; span_id: string; parent_span_id: string | null;
@@ -1049,43 +1050,7 @@ function mapTraceToSpans(traces: TraceSpan[], eventId: string): Span[] {
   });
 }
 
-function detectSubAgentsFromSpans(spans: Span[]): SubAgent[] {
-  const children = new Map<string, Span[]>();
-  const spanMap = new Map<string, Span>();
-  for (const s of spans) {
-    spanMap.set(s.id, s);
-    if (s.parent_span_id) {
-      const kids = children.get(s.parent_span_id) ?? [];
-      kids.push(s);
-      children.set(s.parent_span_id, kids);
-    }
-  }
-  const agents: SubAgent[] = [];
-  for (const span of spans) {
-    if (span.span_type !== "TOOL_CALL") continue;
-    const kids = children.get(span.id) ?? [];
-    let hasAgenticLoop = false;
-    for (const llm of kids.filter(k => k.span_type?.includes("LLM"))) {
-      const gk = children.get(llm.id) ?? [];
-      if (gk.some(g => g.span_type === "TOOL_CALL") || llm.name === "agent.subagent") { hasAgenticLoop = true; break; }
-    }
-    if (!hasAgenticLoop) continue;
-    const collected = new Set<string>();
-    const allIds: string[] = [];
-    let llmCount = 0, toolCount = 0, totalIn = 0, totalOut = 0, model: string | null = null;
-    function collect(id: string) {
-      if (collected.has(id)) return;
-      collected.add(id); allIds.push(id);
-      const s = spanMap.get(id);
-      if (s?.span_type?.includes("LLM")) { llmCount++; if (!model && s.model) model = s.model; totalIn += s.input_tokens ?? 0; totalOut += s.output_tokens ?? 0; }
-      if (s?.span_type === "TOOL_CALL" && s.id !== span.id) toolCount++;
-      for (const kid of children.get(id) ?? []) collect(kid.id);
-    }
-    collect(span.id);
-    agents.push({ root_span_id: span.id, name: span.name, span_ids: allIds, start_time_ms: span.start_time_ms, end_time_ms: span.end_time_ms, duration_ms: span.duration_ms, model, status: span.status, llm_count: llmCount, tool_count: toolCount, total_input_tokens: totalIn, total_output_tokens: totalOut });
-  }
-  return agents;
-}
+
 
 function CloudTraceDetail({ event }: { event: SavedEvent }) {
   const [spans, setSpans] = useState<Span[]>([]);
@@ -1102,13 +1067,13 @@ function CloudTraceDetail({ event }: { event: SavedEvent }) {
       .then(cached => {
         if (cached?.type === "cloud" && cached.spans) {
           setSpans(cached.spans);
-          setSubAgents(detectSubAgentsFromSpans(cached.spans));
+          setSubAgents(detectSubAgents(cached.spans));
           setLoading(false);
           return;
         }
         return fetchCloudTraces(event.id).then(traces => {
           const m = mapTraceToSpans(traces, event.id);
-          setSpans(m); setSubAgents(detectSubAgentsFromSpans(m));
+          setSpans(m); setSubAgents(detectSubAgents(m));
           // Cache to server
           fetch(`/api/saved-runs/cache/${event.id}`, {
             method: "PUT", headers: { "Content-Type": "application/json" },

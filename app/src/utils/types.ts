@@ -129,6 +129,7 @@ export interface LiveEvent {
 export interface SubAgent {
   root_span_id: string;
   name: string;
+  subagent_name?: string;
   span_ids: string[];
   start_time_ms: number;
   end_time_ms: number;
