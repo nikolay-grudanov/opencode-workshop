@@ -31,6 +31,12 @@ UI deltas:
 - `RunDetail.tsx` untouched — `SpanTree`/`FlameTimeline` call `detectSubAgents(spans)` internally.
 
 ### F005 — HTML session export (`openspec/changes/add-html-session-export-f005/`)
+
+**Status:** COMPLETE. Already fully implemented, discovered complete.
+**Commits:** `6af1a45` (helpers + tests), `7fd068b` (adapter + endpoint), `e69a50f` (UI button).
+**Key files:** `src/export/html-export.ts`, `src/export/run-to-export-shape.ts`, `app/src/components/ExportButton.tsx`.
+**Plugin repo:** No plugin-repo changes required.
+
 3 commits, one per phase. **`src/server.ts` is Express-style** (not Hono as some task wording assumed).
 
 - **P1** (`6af1a45`): `package.json` +`markdown-it ^14.1.0` + `@types/markdown-it`; `src/export/html-export.ts` (~230 LOC: 5 pure helpers + `renderSessionHtml` + `ExportShape` interface; split light/dark CSS in `:root` / `:root.dark`; pre-neutralize raw `<img>` tags + `flattenLinksInImagePlaceholders` to defeat linkify-inside-placeholder); `tests/html-export.test.ts` (32 tests, all pass).
@@ -55,6 +61,8 @@ If you run a real daemon later, you can flip those smoke-checkboxes and execute 
 ## What's done (committed) — F004 complete
 
 ### F004 — Phoenix-style spans UI (`openspec/changes/improve-spans-ui-phoenix-style-f004/`)
+
+**Status:** COMPLETE. All 46 tasks done, 5 commits, ~42 min total.
 
 **5 commits, all committed to `main`:**
 

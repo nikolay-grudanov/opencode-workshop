@@ -15,30 +15,59 @@
 
 ## Active Features
 
-### F-005 — Self-contained HTML session export (re-use existing hermes-webui work)
+### F-003 — Sub-agent visualization for OpenCode `task` tool
 
-**Context:** Kolya asked on 2026-07-02 for an interactive HTML export of runs (preferring it over MD from opencode). Miko prototyped `render_session_html(session_dict) -> str` in `/home/gna/hermes-webui/api/session_export_html.py` (297 LOC, with 270-LOC test suite) — produces a single static HTML with embedded dark-theme CSS, no CDN, no external assets, no remote images (security: signed URL leak prevention).
+**Context:** Workshop already has `src/agents.ts` that **detects** sub-agents via the generic pattern `TOOL_CALL > LLM_GENERATION > TOOL_CALL`, but:
 
-**But:** that's a hermes-webui artifact, not an opencode-workshop one. Kolya now wants this **inside opencode-workshop itself** so the Workshop UI can "Export → static HTML" without server round-trip.
+1. There's no UI affordance to **name** an OpenCode sub-agent (Workshop currently shows "tool: task")
+2. No way to filter by sub-agent identity
+3. No way to see the sub-agent's full conversation as a separate "session"
 
-**Plan (F-005):**
-- Re-use the rendering logic from `hermes-webui/api/session_export_html.py` (it's pure functions, no hermes-webui deps).
-- Adapt inputs to our Workshop DB shape: `runs.metadata + runs.spans` (we already serialize spans with full input/output via `replay.ts`).
-- Add a new endpoint `GET /api/runs/:id/export` returning text/html.
-- Add UI button "Export HTML" on `RunDetail` page.
-- Keep the security model: any `<img src="https://...">` is replaced with placeholder before write.
-
-**Where the prototype already exists (for reference, NOT import):**
-`/home/gna/hermes-webui/api/session_export_html.py` — see `_neutralize_remote_images()` (chokepoint that keeps export self-contained).
+**Plan (F-003):**
+- Hook `tool.execute.before` (per our opencode-workshop-plugin fork): when `tool === "task"`, set `metadata.subagent_name` from input args (OpenCode's `task` tool takes a `description` arg).
+- In Workshop UI: `RunDetail` shows the task tool as a card with the name + child spans as its own sub-tree.
+- Filter sidebar gets a new section "Sub-agents in this run".
 
 **Todos:**
-- [x] Plan F-005 with location-of-existing-work reference (this entry)
-- [ ] Read the hermes-webui prototype to identify the pure rendering surface vs hermes-specific glue
-- [ ] Decide on adapter: re-implement (clean, but duplicate logic) vs symlink/copy (faster, but coupling) — depends on hermes-webui API stability
-- [ ] Add `GET /api/runs/:id/export` endpoint returning text/html with Content-Disposition: attachment
-- [ ] Add "Export HTML" button to RunDetail page (calls endpoint, triggers browser download)
-- [ ] Add focused test: run with synthetic spans → HTML contains all span names, model, no remote URLs
-- [ ] Commit + push (waiting on Kolya's 'push' command)
+- [x] Plan F-003 (this entry)
+- [ ] Patch opencode-workshop-plugin: capture `task` tool description into span metadata (in plugin-side — outside this workshop repo)
+- [ ] In `src/agents.ts`: detect sub-agents by tool name `task` (not just by tree pattern) for better naming
+- [ ] In `SpanTree.tsx`: render sub-agent spans with their name as the label, not just "tool: task"
+- [ ] Add "Sub-agents" section to RunDetail sidebar
+- [ ] Test: run an OpenCode session that uses task tool, verify span tree shows named sub-agents
+
+---
+
+### F-002 — Replace Codex / Claude Code integrations with OpenCode equivalents
+
+**Context:** Workshop upstream has integrations for Codex CLI (`src/codex-cli-chat.ts`, `src/codex-sessions.ts`) and Claude Code (`src/claude-cli-chat.ts`, `src/spans/adapters/claude-agent-sdk.ts`). Kolya's stack is OpenCode-first (per task: "Мы все что с ними связано заменяем на opencode").
+
+**Scope of removal:**
+- ❌ Codex CLI integration — file `src/codex-cli-chat.ts`, references in `src/provider-options.ts`, `src/secret-store.ts`, `src/annotations.ts`, `src/db/schema.ts`, `scripts/seed-traces.ts`, `src/demo-traces.ts`, `scripts/dev-all.ts`, examples `examples/ai-sdk-chat/`, dependency `@ai-sdk/openai` (only if no other use)
+- ❌ Claude Code CLI — file `src/claude-cli-chat.ts`
+- ❌ Claude Agent SDK adapter — `src/spans/adapters/claude-agent-sdk.ts` (replaced by opencode-specific adapter)
+- ❌ Anthropic-specific — example `examples/claude-agent-sdk/`, `examples/anthropic-chat/`, dependency `@ai-sdk/anthropic`
+- ❌ Anthropic-specific provider install in `agent-install` / `examples/`
+
+**Kept (NOT Codex/Claude-specific):**
+- ✅ `src/spans/adapters/ai-sdk.ts` — generic AI SDK adapter, used by OpenCode too (OpenCode uses AI SDK-style spans)
+- ✅ `src/spans/adapters/livekit.ts` — separate framework
+- ✅ `@ai-sdk/openai` dep — OpenCode also uses OpenAI-compatible providers (via OpenCode-go combo), keep
+- ✅ `src/agents.ts` (sub-agent detection) — generic, used for OpenCode too
+- ✅ `examples/ai-sdk-chat/` — generic AI SDK example, not Codex-specific
+
+**Verification:** after removal, `bun run dev` must still build + serve, OpenCode traces must still stream (this is the regression bar).
+
+**Todos:**
+- [x] Plan F-002 scope (this entry, with explicit "kept" list)
+- [ ] `rm` files in scope
+- [ ] `grep -r "codex\|claude.code\|claude-agent-sdk\|anthropic" -- src/` should return no results (after fixes)
+- [ ] `bun run typecheck` (or whatever upstream uses) — must pass
+- [ ] `bun run dev` (or our build) — smoke: OpenCode trace streams to UI
+- [ ] Remove `@ai-sdk/anthropic` from package.json (verify OpenCode doesn't need it)
+- [ ] Remove `raindrop-ai/claude-agent-sdk` from deps if present
+- [ ] Update `examples/` — remove `claude-agent-sdk/` and `anthropic-chat/` (keep ai-sdk-chat and opencode-specific ones if any)
+- [ ] Commit + push
 
 ---
 
@@ -187,6 +216,23 @@
 ---
 
 ## Closed Features
+
+### F-005 — Self-contained HTML session export — Closed 2026-07-21
+
+**Context:** Kolya asked on 2026-07-02 for an interactive HTML export of runs. Ported pure rendering logic from `hermes-webui/api/session_export_html.py` into workshop-native TypeScript.
+
+**Result:** 3 commits:
+- **P1** (`6af1a45`): Pure helpers (`src/export/html-export.ts`: 5 helpers + `renderSessionHtml` + `ExportShape` interface) + 32-test suite (`tests/html-export.test.ts`) + `markdown-it` dependency. Security: remote images neutralized, no external assets, no CDN.
+- **P2** (`7fd068b`): Adapter `src/export/run-to-export-shape.ts` (maps `getRunWithSpans` → `ExportShape` via `extractContext()`) + Express endpoint `GET /api/runs/:id/export` with `Content-Disposition: inline; filename="run-{id}.html"`.
+- **P3** (`e69a50f`): UI button `app/src/components/ExportButton.tsx` mounted in `RunDetail.tsx` header. Reads `localStorage` theme preference. Opens export in new tab.
+
+**Verification:** `bun test tests/html-export.test.ts` → 32/32 pass. `bun x tsc --noEmit` → 0 errors. `bun run lint` → 0 errors. `bun run build` → success.
+
+**Smoke tests deferred** (require running daemon): curl HTML output, 404 on nonexistent run, browser click-through.
+
+**Plugin-repo impact:** NONE. F-005 consumes existing span data via `extractContext()` — no plugin changes needed. Future enhancements (span tree export, tool call listing, sub-agent hierarchy) would require extending `run-to-export-shape.ts` + `ExportShape`, still plugin-agnostic.
+
+---
 
 ### F-004 — Phoenix-style spans UI — Closed 2026-07-21
 
