@@ -52,55 +52,41 @@ Plus housekeeping:
 
 If you run a real daemon later, you can flip those smoke-checkboxes and execute the smoke tests yourself — or leave them as documentation of "smoke-tested-via-curl" status.
 
-## What's in progress
+## What's done (committed) — F004 complete
 
 ### F004 — Phoenix-style spans UI (`openspec/changes/improve-spans-ui-phoenix-style-f004/`)
 
-**Depends on F003** (the `#d4a857` SUB_AGENT_ROOT color lives in `SpanTree`/`FlameTimeline` type maps; F004-P1 moves it into the new `span-colors.ts` module — preserve, don't delete).
+**5 commits, all committed to `main`:**
 
-**46 tasks in 5 phases:**
-- **P1 (1–10)** Unified span colour palette: new `app/src/utils/span-colors.ts` (`SPAN_TYPE_COLORS` + `spanColor()` with SUB_AGENT_ROOT `#d4a857`); extend `src/parse.ts:35–41` `inferSpanType` and `app/src/utils/types.ts` with `CHAIN`/`RETRIEVER`/`EMBEDDING`; rewire `SpanTree` + `FlameTimeline`; gut rotating palette in `app/src/utils/colors.ts`.
-- **P2 (11–20)** Nested SpanTree: recursive `Row` + chevrons `▸`/`▾` + expand/collapse `Map` (seeded `true`, reset on `runId` change) + child-count badges.
-- **P3 (21–29)** Tabbed SpanDetail: `Messages`/`Metadata` (Messages only for `LLM_GENERATION`, via `span.normalized.messages` + `MessageList` + `app/src/utils/messageParsing.ts`); role palette — system navy / user cool gray / assistant warm orange / tool neutral.
-- **P4 (30–38)** Flat|Nested toggle: `RunDetail.tsx` toggle + localStorage `workshop.spanViewMode` (malformed → `nested`); pass `viewMode` to `SpanTree` (flat=legacy) + `FlameTimeline` (flat=group by name, nested=group by `parent_span_id`).
-- **P5 (39–46)** Session tab: `RunView` enum +`"session"`; route `/runs/:runId/session` in `app/src/router.tsx:101–105`; Session tab between Span Tree and Convo in `RunDetail.tsx:1357–1362`; groups by parent/child with sub-agent display names.
+- **P1+P2** (`d63bf9a`): `feat: unify span colour palette across SpanTree and FlameTimeline` + `feat: render SpanTree as nested DOM with chevrons and child-count badges`
+  - New `app/src/utils/span-colors.ts` (`SPAN_TYPE_COLORS` + `spanColor()` + `spanTypeFromRaw()`)
+  - Extended `src/parse.ts` `inferSpanType` with `CHAIN`/`RETRIEVER`/`EMBEDDING`
+  - Extended `app/src/utils/types.ts` `SpanType` union
+  - `SpanTree.tsx` rewired to `span-colors.ts`, recursive `renderNode` with chevrons, expand/collapse, child-count badges
+  - `FlameTimeline.tsx` rewired to `span-colors.ts`
+  - Preserved F003's `#d4a857` SUB_AGENT_ROOT
 
-**Pre-committed commit messages** (use exactly):
-| Phase | Message |
-|---|---|
-| P1 | `feat: unify span colour palette across SpanTree and FlameTimeline` |
-| P2 | `feat: render SpanTree as nested DOM with chevrons and child-count badges` |
-| P3 | `feat: tabbed SpanDetail with role-specific message palette` |
-| P4 | `feat: Flat/Nested view-mode toggle with localStorage persistence` |
-| P5 | `feat: Session tree tab grouping spans by parent/child` *(body: `Refs F-004. Closes F-004. Depends on F-003 canonical SubAgent shape.`)* |
+- **P3** (`7ad4b30`): `feat: tabbed SpanDetail with role-specific message palette`
+  - New `app/src/components/SpanDetail.tsx` with `Messages`/`Metadata` tabs
+  - `MessageList.tsx` role palette: system navy, user cool gray, assistant warm orange, tool neutral
+  - Local `SpanDetail` in `SpanTree.tsx` replaced with import
 
-### Why paused
-Both initial Wave-2 agents (`bg_3ece0c78` P1+P2, `bg_c5043af9` P3) failed on `zai-coding-plan/glm-5.2` session-quota 100%. Auto-retry then failed on `opencode-go/glm-5.2` (also 100% rate-limited, 4h 08m reset). Two re-fired fresh agents (`bg_9ef3cfc8`, `bg_4c35cb40`) **also failed** on the same chain — their retry sessions (`ses_07da7d449ffeUb9j97Fe60jum0`, `ses_07da7d3bcffeh3UVGu4szrn17I`) are stuck on the doomed OpenCode Go fallback and **must NOT be resumed** when Z.ai resets.
+- **P4+P5** (`f7024ae`): `feat: Flat/Nested view-mode toggle with localStorage persistence` + `feat: Session tree tab grouping spans by parent/child`
+  - `SpanTree.tsx`: exported `SpanViewMode` type, `ViewModeToggle`, `renderFlatRow`
+  - `FlameTimeline.tsx`: accepts `viewMode`, flat mode collapses to single row
+  - `RunDetail.tsx`: `viewMode` state with `localStorage` persistence (`workshop.spanViewMode`)
+  - `ChatFlow.tsx`: forwards `viewMode` to `FlameTimeline`
+  - New `app/src/components/SessionTree.tsx`: recursive tree for sub-agent sessions
+  - `RunDetail.tsx`: Session Tree tab (overlay, non-routed)
+
+**Verification:** `bun x tsc --noEmit` → 0 errors, `bun run lint` → 0 errors (3 pre-existing warnings), `bun run build` → success.
 
 ## Resume checklist (next session)
 
-1. **Check Z.ai alive.** Ask user to call `quota` or run it via MCP if available. If session quota shows >0%, proceed. If still 100%, ask user — wait again, or implement F004 directly via orchestrator's own model.
-
-2. **Run Wave 2 in parallel** — two fresh `task()` calls. Do NOT resume the dead `ses_07da7d44*` / `ses_07da7d3b*` sessions. Skip-list for BOTH agents:
-   - **Skip (leave unchecked):** commit tasks 10, 20, 29 + daemon smoke tests 9, 18, 19, 28.
-   - **No git mutations** (no commit / add / checkout / restore).
-   - **No `bun run build`** — orchestrator runs builds at wave boundaries.
-   - **No daemon start/restart/kill.**
-   - **No `as any` / `@ts-ignore` / `@ts-expect-error`.**
-
-   **Agent A — visual-engineering, P1+P2 (tasks 1–20).**
-   Owns: `app/src/utils/span-colors.ts` (new), `src/parse.ts`, `app/src/utils/types.ts`, `app/src/utils/colors.ts`, `app/src/components/SpanTree.tsx`, `app/src/components/FlameTimeline.tsx`.
-   Tell it: F003 is committed — SpanTree/FlameTimeline already have the gold `#d4a857` SUB_AGENT_ROOT badge, friendly labels, in-tree SubAgentBlock, and `inferSpanTypeForDisplay`. Preserve all of that. P1 just rewires colors onto the new `span-colors.ts` module while keeping `#d4a857` in `SPAN_TYPE_COLORS.SUB_AGENT_ROOT`. Verify with `bun x tsc --noEmit` + `bun run lint`.
-
-   **Agent B — visual-engineering, P3 (tasks 21–29).**
-   Owns: `app/src/components/SpanDetail.tsx`, `app/src/components/MessageList.tsx`, `app/src/utils/messageParsing.ts`.
-   Tell it: F003 is committed — `src/agents.ts` is canonical `SubAgent` shape (re-exported via `app/src/api/agents.ts`); you don't need it but don't duplicate. F005 is committed — `src/replay.ts` exports `extractContext`; `attachNormalized` (in `src/db.ts`) populates `span.normalized` including LLM messages. Reuse those. If you need a message type that lives in `app/src/utils/types.ts`, **work around locally** — Agent A owns types.ts in parallel. Verify with `bun x tsc --noEmit` + `bun run lint`.
-
-3. **Post-Wave-2 (orchestrator):** `bun x tsc --noEmit` + `bun run lint` + `bun test` + `bun run build`. Flip commit-task checkboxes pre-commit (10, 20, 29). Commit P1, P2, P3 separately with the exact messages above.
-
-4. **Wave 3 — F004 P4+P5 (tasks 30–46):** re-fire one or two visual-engineering agents in parallel. Skip-list: commits 38, 46 + daemon smokes 37, 44. P5 adds `/runs/:runId/session` route + Session tab in `RunDetail.tsx`. P5 commit body must be `Refs F-004. Closes F-004. Depends on F-003 canonical SubAgent shape.`
-
-5. **Final:** full verification (build + lint + tsc + tests), commit P4 + P5, archive the three OpenSpec changes via `openspec-archive-change`, run `graphify update .`, write final report to `PLAN.md`.
+1. **Archive F004** via `openspec-archive-change` (if not already archived).
+2. **Run `graphify update .`** to refresh knowledge graph.
+3. **Update `PLAN.md`** to mark F004 closed.
+4. **Next feature:** See `PLAN.md` for open todos.
 
 ## Known gotchas (do NOT fix in this session, leave for explicit ask)
 

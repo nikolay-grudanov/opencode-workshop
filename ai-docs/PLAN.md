@@ -109,14 +109,14 @@
 - [x] Add reference screenshots to `ai-docs/reference/` and visual diff table
 - [x] Plan F-004.4 view modes toggle (Flat ↔ Nested) — Kolya's 2026-07-10 request
 - [x] Plan F-004.5 session-wide tree for sub-agent inspection — Kolya's 2026-07-10 request
-- [ ] Audit `src/spans/normalize.ts` to verify it captures `parent_span_id` (depth for nesting) — prerequisite for F-004.1 and F-004.5
-- [ ] F-004.1: Update `SpanTree.tsx` to render nested tree with indent + chevron (shared component with F-004.5)
-- [ ] F-004.2: Add span-type → color mapping for CHAIN, RETRIEVER, EMBEDDING
-- [ ] F-004.3: Split Input Messages from Convo tab → Info tab with system/user/assistant role-coloring
-- [ ] F-004.4: Add view mode toggle in `RunDetail` toolbar (Flat waterfall ↔ Nested tree), persist choice in `localStorage`
-- [ ] F-004.5: Add "Full session tree" tab in `RunDetail` — recursive render with parent_span_id linkage, sub-agent cards with child span count, click to expand/jump
+- [x] Audit `src/spans/normalize.ts` to verify it captures `parent_span_id` (depth for nesting) — prerequisite for F-004.1 and F-004.5
+- [x] F-004.1: Update `SpanTree.tsx` to render nested tree with indent + chevron (shared component with F-004.5)
+- [x] F-004.2: Add span-type → color mapping for CHAIN, RETRIEVER, EMBEDDING
+- [x] F-004.3: Split Input Messages from Convo tab → Info tab with system/user/assistant role-coloring
+- [x] F-004.4: Add view mode toggle in `RunDetail` toolbar (Flat waterfall ↔ Nested tree), persist choice in `localStorage`
+- [x] F-004.5: Add "Full session tree" tab in `RunDetail` — recursive render with parent_span_id linkage, sub-agent cards with child span count, click to expand/jump
 - [ ] Add "Export as OTel JSON" button → `GET /api/runs/:id/export-otel` (optional, F-004.6 if Kolya wants dataset eval)
-- [ ] Commit + push
+- [x] Commit + push
 
 ---
 
@@ -187,6 +187,17 @@
 ---
 
 ## Closed Features
+
+### F-004 — Phoenix-style spans UI — Closed 2026-07-21
+
+**Result:** 5 commits implementing Phoenix-style span tree visualization:
+- **P1+P2** (`d63bf9a`): Unified span color palette (`span-colors.ts`) with CHAIN/RETRIEVER/EMBEDDING types + nested tree rendering with chevrons, expand/collapse, child-count badges
+- **P3** (`7ad4b30`): Tabbed SpanDetail with Messages/Metadata tabs + role-specific message palette (system navy, user gray, assistant orange, tool neutral)
+- **P4+P5** (`f7024ae`): Flat/Nested view-mode toggle with localStorage persistence + Session Tree tab for sub-agent hierarchy visualization
+
+**Verification:** `bun x tsc --noEmit` → 0 errors, `bun run lint` → 0 errors (3 pre-existing warnings), `bun run build` → success.
+
+---
 
 ### F-001 — Remove all Cloud Raindrop integration — Closed 2026-07-21
 
