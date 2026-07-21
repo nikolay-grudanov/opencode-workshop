@@ -20,6 +20,7 @@ import { ConvoDetail } from "./ConvoDetail";
 import { RemoteConvoLoader } from "../pages/SearchPage";
 import { RotateCcw, Bookmark, Pencil, ChevronDown, ArrowDown, ChevronRight, MessageCircle, SearchX } from "lucide-react";
 import { LocalAgentSetupCTA, SetupReplayModal } from "./LocalAgentSetupCTA";
+import { ExportButton } from "./ExportButton";
 import { C } from "../utils/colors";
 import { fmt, isActive } from "../utils/helpers";
 import { parseReplayMetadata } from "../utils/types";
@@ -779,6 +780,7 @@ function ViewHeader({
                   )}
                 </>;
                 })()}
+                <ExportButton runId={run?.id ?? ""} />
                 <MoreMenu runId={run?.id} deleteRedirectPath={deleteRedirectPath} />
               </div>
             )}
