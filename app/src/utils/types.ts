@@ -11,6 +11,23 @@ export interface Run {
   finished?: number | null; // 1 if root span has OK/ERROR status
 }
 
+/**
+ * Display-time span-type union. Mirrors `inferSpanType`'s return union in
+ * `src/parse.ts` plus the F-003 display-only `SUB_AGENT_ROOT`. Keep in
+ * structural sync: a new server-side type MUST be added here, or
+ * `spanTypeFromRaw` will silently coerce it to INTERNAL.
+ */
+export type SpanType =
+  | "TRACE"
+  | "LLM_GENERATION"
+  | "TOOL_CALL"
+  | "AGENT_ROOT"
+  | "INTERNAL"
+  | "CHAIN"
+  | "RETRIEVER"
+  | "EMBEDDING"
+  | "SUB_AGENT_ROOT";
+
 export interface ReplayMetadata {
   replay: {
     sourceRunId: string;

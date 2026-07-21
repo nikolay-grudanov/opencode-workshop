@@ -1,18 +1,17 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Check } from "lucide-react";
-import { C, spanColor } from "../utils/colors";
+import { C } from "../utils/colors";
+import { SPAN_TYPE_COLORS, SPAN_TYPE_LABELS, spanTypeFromRaw } from "../utils/span-colors";
 import { fmt, tryJson } from "../utils/helpers";
 import type { Span, SubAgent } from "../utils/types";
 import { detectSubAgents } from "../api/agents";
 
 function spanTypeInfo(span: Span, subAgents: SubAgent[]): { color: string; label: string } {
   if (span.span_type === "TOOL_CALL" && subAgents.some(s => s.root_span_id === span.id)) {
-    return { color: "#d4a857", label: "AGENT" };
+    return { color: SPAN_TYPE_COLORS.SUB_AGENT_ROOT, label: SPAN_TYPE_LABELS.SUB_AGENT_ROOT };
   }
-  if (span.span_type === "TRACE") return { color: C.purple, label: "TRACE" };
-  if (span.span_type === "TOOL_CALL") return { color: "#b08c5a", label: "TOOL" };
-  if (span.span_type?.includes("LLM")) return { color: C.fg1, label: "LLM" };
-  return { color: C.fg0, label: "SPAN" };
+  const t = spanTypeFromRaw(span.span_type);
+  return { color: SPAN_TYPE_COLORS[t], label: SPAN_TYPE_LABELS[t] };
 }
 
 const LLM_BAR_COLOR = "rgba(255,255,255,0.38)";
@@ -155,7 +154,6 @@ function SpanTooltip({
 }
 
 export function FlameTimeline({ spans }: { spans: Span[] }) {
-  const colorMap = useMemo(() => new Map<string, string>(), []);
   const vizSpans = useMemo(() => spans.filter(s => s.span_type === "TRACE" || s.span_type === "TOOL_CALL" || s.span_type?.includes("LLM")), [spans]);
   const subAgents = useMemo(() => detectSubAgents(spans), [spans]);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -270,12 +268,16 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
           {toolNames.map(name => {
             const firstToolSpan = firstToolSpanByName.get(name);
             const labelHovered = hoveredLabelName === name;
+            const firstSpanForColor = firstToolSpan ?? vizSpans.find(s => s.name === name);
+            const labelColor = firstSpanForColor
+              ? SPAN_TYPE_COLORS[spanTypeFromRaw(firstSpanForColor.span_type)]
+              : C.fg0;
             const label = (
               <div
                 className={`flex items-center px-3 text-[10px] font-mono min-w-0 ${labelColumnCapped ? "truncate" : "whitespace-nowrap"}`}
                 style={{
                   height: ROW,
-                  color: labelHovered ? C.fg5 : llmNames.has(name) ? LLM_LABEL_COLOR : spanColor(name, colorMap),
+                  color: labelHovered ? C.fg5 : llmNames.has(name) ? LLM_LABEL_COLOR : labelColor,
                 }}
                 title={name}
               >
@@ -292,7 +294,7 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
                   padding: 0,
                   border: 0,
                   background: labelHovered ? "rgba(255,255,255,0.075)" : "transparent",
-                  boxShadow: labelHovered ? `inset 2px 0 0 ${spanColor(name, colorMap)}` : undefined,
+                  boxShadow: labelHovered ? `inset 2px 0 0 ${labelColor}` : undefined,
                   cursor: "pointer",
                   transition: "background 120ms ease, box-shadow 120ms ease",
                 }}
@@ -337,7 +339,7 @@ export function FlameTimeline({ spans }: { spans: Span[] }) {
             const row = toolNames.indexOf(span.name);
             const left = (span.start_time_ms - minT) * pxPerMs;
             const w = Math.max((span.end_time_ms - span.start_time_ms) * pxPerMs, BAR_H);
-            const color = span.span_type?.includes("LLM") ? LLM_BAR_COLOR : spanColor(span.name, colorMap);
+            const color = span.span_type?.includes("LLM") ? LLM_BAR_COLOR : SPAN_TYPE_COLORS[spanTypeFromRaw(span.span_type)];
             const isErr = span.status === "ERROR";
             const isLLM = span.span_type?.includes("LLM");
             const focusBarTool = () => {

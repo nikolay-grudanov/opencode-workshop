@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { C } from "../utils/colors";
+import { SPAN_TYPE_COLORS, SPAN_TYPE_LABELS, spanTypeFromRaw } from "../utils/span-colors";
 import { fmt, tryJson, detectProvider } from "../utils/helpers";
 import type { Span, SubAgent } from "../utils/types";
 import { detectSubAgents } from "../api/agents";
@@ -11,6 +12,7 @@ import { InlineCreateForm } from "./TraceAnnotations";
 import type { Annotation, AnnotationKind } from "../hooks/use-annotations";
 import { DeepLinkedText } from "../utils/deep-links";
 import { sendWorkshopMessage } from "../hooks/use-workshop-ws";
+import { SpanDetail } from "./SpanDetail";
 
 function CollapsibleSection({ title, preview, data, maxExpand = 3 }: { title: string; preview: string; data: unknown; maxExpand?: number }) {
   const [open, setOpen] = useState(false);
@@ -43,29 +45,21 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-const TYPE_LABEL: Record<string, { color: string; label: string }> = {
-  TRACE: { color: C.purple, label: "TRACE" },
-  TOOL_CALL: { color: "#b08c5a", label: "TOOL" },
-  SUB_AGENT_ROOT: { color: "#d4a857", label: "AGENT" },
-  LLM_GENERATION: { color: "#5a8ab0", label: "LLM" },
-  INTERNAL: { color: C.fg0, label: "SPAN" },
-};
-
-function typeInfo(span: Span) {
-  if (span.span_type === "TRACE") return TYPE_LABEL.TRACE;
-  if (span.span_type === "TOOL_CALL") return TYPE_LABEL.TOOL_CALL;
-  if (span.span_type?.includes("LLM")) return TYPE_LABEL.LLM_GENERATION;
-  return TYPE_LABEL.INTERNAL;
+function typeInfo(span: Span): { color: string; label: string } {
+  const t = spanTypeFromRaw(span.span_type);
+  return { color: SPAN_TYPE_COLORS[t], label: SPAN_TYPE_LABELS[t] };
 }
 
+// F-003 contract preserved: TOOL_CALL spans rooting a sub-agent get the
+// gold SUB_AGENT_ROOT badge. Only the lookup mechanism moved — to span-colors.
 function inferSpanTypeForDisplay(span: Span, subAgents: SubAgent[]): { color: string; label: string } {
   if (span.span_type === "TOOL_CALL" && subAgents.some(s => s.root_span_id === span.id)) {
-    return TYPE_LABEL.SUB_AGENT_ROOT;
+    return { color: SPAN_TYPE_COLORS.SUB_AGENT_ROOT, label: SPAN_TYPE_LABELS.SUB_AGENT_ROOT };
   }
   return typeInfo(span);
 }
 
-function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, onContextMenu, annotations, freshIds, onClearFresh, subAgents }: {
+function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, onContextMenu, annotations, freshIds, onClearFresh, subAgents, chevron, childCount, onChevronClick }: {
   span: Span; depth: number; minTime: number; totalDur: number;
   selected: boolean; flashing: boolean; onClick: () => void;
   onContextMenu?: (e: React.MouseEvent, span: Span) => void;
@@ -73,6 +67,9 @@ function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, 
   freshIds: Set<string>;
   onClearFresh: (id: string) => void;
   subAgents: SubAgent[];
+  chevron: "expanded" | "collapsed" | null;
+  childCount: number;
+  onChevronClick?: () => void;
 }) {
   const info = inferSpanTypeForDisplay(span, subAgents);
   const color = info.color;
@@ -106,9 +103,32 @@ function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, 
       onContextMenu={onContextMenu ? (e) => { e.preventDefault(); onContextMenu(e, span); } : undefined}
     >
       <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: 220, paddingLeft: depth * 14 + 8, minWidth: 220 }}>
+        {chevron !== null ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onChevronClick?.(); }}
+            title={chevron === "expanded" ? "Collapse subtree" : "Expand subtree"}
+            aria-label={chevron === "expanded" ? "Collapse subtree" : "Expand subtree"}
+            aria-expanded={chevron === "expanded"}
+            style={{ width: 12, height: 12, padding: 0, background: "transparent", border: 0, color: C.fg1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+          >
+            <Chevron open={chevron === "expanded"} size={10} />
+          </button>
+        ) : (
+          <span aria-hidden style={{ width: 12, height: 12, flexShrink: 0, display: "inline-block" }} />
+        )}
         <span className="text-[10px] font-mono font-bold px-1 py-0.5 rounded" style={{ color: info.color, background: `${info.color}12` }}>
           {info.label}
         </span>
+        {childCount > 0 && (
+          <span
+            className="text-[9px] font-mono px-1 py-0.5 rounded"
+            style={{ color: C.fg1, background: "rgba(255,255,255,0.05)", lineHeight: 1.2 }}
+            title={`${childCount} child span${childCount === 1 ? "" : "s"}`}
+          >
+            {childCount}
+          </span>
+        )}
         <span className="text-[11px] font-mono truncate" style={{ color: isErr ? C.red : C.fg3 }} title={displayLabel}>
           {displayLabel}
         </span>
@@ -138,139 +158,6 @@ function SpanRow({ span, depth, minTime, totalDur, selected, flashing, onClick, 
       <div className="flex-shrink-0 text-right pr-3" style={{ width: 55 }}>
         <span className="text-[10px] font-mono" style={{ color: C.fg0 }}>{fmt(span.duration_ms)}</span>
       </div>
-    </div>
-  );
-}
-
-function SpanDetail({ span }: { span: Span }) {
-  const info = typeInfo(span);
-  const isErr = span.status === "ERROR";
-
-  return (
-    <div className="p-4 space-y-3 h-full overflow-auto sb">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded" style={{ color: info.color, background: `${info.color}15`, marginLeft: -6 }}>
-            {info.label}
-          </span>
-          {isErr && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ color: C.red, background: "rgba(204,102,102,0.1)" }}>ERROR</span>}
-          {(() => { const p = detectProvider(span.model, span.provider); return p ? <span className="text-[9px] font-mono font-medium px-1.5 py-0.5 rounded" style={{ color: C.fg1, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>{p.label}</span> : null; })()}
-        </div>
-        <div className="text-sm font-mono font-medium" style={{ color: C.fg4 }}>{span.name}</div>
-      </div>
-
-      {/* Error banner */}
-      {isErr && span.output_payload && (
-        <div className="rounded-lg p-2.5" style={{ background: "rgba(204,102,102,0.06)", border: "1px solid rgba(204,102,102,0.12)" }}>
-          <div className="text-[9px] uppercase tracking-wide mb-1 font-medium" style={{ color: C.red }}>Error</div>
-          <pre className="text-[11px] font-mono leading-relaxed" style={{ color: C.red }}>{tryJson(span.output_payload)}</pre>
-        </div>
-      )}
-
-      {/* Meta */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono">
-        <div style={{ color: C.fg0 }}>duration</div>
-        <div style={{ color: C.fg2 }}>{fmt(span.duration_ms)}</div>
-        {span.model && <><div style={{ color: C.fg0 }}>model</div><div style={{ color: C.fg2 }}>{span.model}</div></>}
-        {span.input_tokens != null && <><div style={{ color: C.fg0 }}>input tokens</div><div style={{ color: C.fg2 }}>{span.input_tokens.toLocaleString()}</div></>}
-        {span.output_tokens != null && <><div style={{ color: C.fg0 }}>output tokens</div><div style={{ color: C.fg2 }}>{span.output_tokens.toLocaleString()}</div></>}
-        <div style={{ color: C.fg0 }}>status</div>
-        <div style={{ color: isErr ? C.red : C.fg2 }}>{span.status}</div>
-        <div style={{ color: C.fg0 }}>start</div>
-        <div style={{ color: C.fg2 }}>{new Date(span.start_time_ms).toISOString().replace("T", " ").slice(0, 23)}</div>
-        <div style={{ color: C.fg0 }}>end</div>
-        <div style={{ color: C.fg2 }}>{span.end_time_ms ? new Date(span.end_time_ms).toISOString().replace("T", " ").slice(0, 23) : "—"}</div>
-        <div style={{ color: C.fg0 }}>span id</div>
-        <div style={{ color: C.fg0 }}>{span.id.slice(-12)}</div>
-        {span.attributes && (() => { try { const a = JSON.parse(span.attributes); return a["ai.provider.baseURL"] ? <><div style={{ color: C.fg0 }}>base url</div><div style={{ color: C.fg0 }}>{a["ai.provider.baseURL"]}</div></> : null; } catch { return null; } })()}
-      </div>
-
-      {/* LLM Provider Options — collapsible */}
-      {span.attributes && (() => {
-        try {
-          const attrs: unknown = JSON.parse(span.attributes);
-          if (!attrs || typeof attrs !== "object" || Array.isArray(attrs)) return null;
-          const configObj: Record<string, unknown> = {};
-          for (const [k, v] of Object.entries(attrs)) {
-            if (k === "ai.provider.headers" ||
-                k === "ai.request.thinking" || k === "ai.request.providerOptions" ||
-                k.startsWith("ai.settings.") || k.startsWith("ai.request.headers.") ||
-                (k.startsWith("gen_ai.request.") && k !== "gen_ai.request.model")) {
-              const label = k.replace("gen_ai.request.", "").replace("ai.provider.", "").replace("ai.request.", "").replace("ai.settings.", "settings.");
-              let parsed = v;
-              if (typeof v === "string") { try { parsed = JSON.parse(v); } catch {} }
-              // Unwrap providerOptions.{provider} — if it's a single-key object with a provider name, hoist its contents
-              if (label === "providerOptions" && parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                const parsedOptions = parsed as Record<string, unknown>;
-                const keys = Object.keys(parsedOptions);
-                if (keys.length === 1 && typeof parsedOptions[keys[0]] === "object") {
-                  // e.g. { anthropic: { thinking: ..., cacheControl: ... } } → { thinking: ..., cacheControl: ... }
-                  const inner = parsedOptions[keys[0]];
-                  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
-                    for (const [ik, iv] of Object.entries(inner)) {
-                      configObj[ik] = iv;
-                    }
-                  }
-                  continue;
-                }
-              }
-              configObj[label] = parsed;
-            }
-          }
-          if (Object.keys(configObj).length === 0) return null;
-          const previewVal = (v: unknown): string => {
-            if (v === null) return "null";
-            if (v === true || v === false) return String(v);
-            if (typeof v === "string") return v.length > 25 ? v.slice(0, 25) + "\u2026" : v;
-            if (typeof v === "number") return String(v);
-            if (Array.isArray(v)) return `[${v.length}]`;
-            if (v && typeof v === "object") {
-              const entries = Object.entries(v).slice(0, 3);
-              const inner = entries.map(([ik, iv]) => `${ik}: ${typeof iv === "object" ? (iv === null ? "null" : Array.isArray(iv) ? `[${iv.length}]` : "{...}") : previewVal(iv)}`).join(", ");
-              return entries.length < Object.keys(v).length ? `${inner}, \u2026` : inner;
-            }
-            return String(v);
-          };
-          const preview = Object.entries(configObj).map(([k, v]) => `${k}: ${previewVal(v)}`).join("  \u00B7  ");
-
-          const providerName = (() => {
-            const providerValue = Object.entries(attrs).find(([key]) => key === "ai.model.provider")?.[1];
-            const p = typeof providerValue === "string" ? providerValue : undefined;
-            if (!p) return "";
-            const name = p.split(".")[0];
-            return name.charAt(0).toUpperCase() + name.slice(1);
-          })();
-          const title = providerName ? `Provider Options (${providerName})` : "Provider Options";
-          return <CollapsibleSection title={title} preview={preview} data={configObj} maxExpand={10} />;
-        } catch { return null; }
-      })()}
-
-      {/* Input */}
-      {span.input_payload && (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-[10px] uppercase tracking-wide font-medium" style={{ color: C.fg1 }}>Input</div>
-            <CopyButton text={tryJson(span.input_payload) ?? span.input_payload} />
-          </div>
-          <div className="p-2 rounded" style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${C.border}` }}>
-            <JsonView data={span.input_payload} />
-          </div>
-        </div>
-      )}
-
-      {/* Output */}
-      {span.output_payload && (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-[10px] uppercase tracking-wide font-medium" style={{ color: C.fg1 }}>Output</div>
-            <CopyButton text={tryJson(span.output_payload) ?? span.output_payload} />
-          </div>
-          <div className="p-2 rounded" style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${C.border}` }}>
-            <JsonView data={span.output_payload} />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -319,6 +206,27 @@ export function SpanTree({
   const [flashId, setFlashId] = useState<string | null>(null);
   const runId = spans[0]?.run_id ?? null;
   const reportedSelectedId = selectedId && spans.some((s) => s.id === selectedId) ? selectedId : null;
+
+  // Expand/collapse state. Reset ONLY on runId change (not on spans change) so
+  // live updates within a run preserve user collapse choices — see F-004.1 spec.
+  const [expanded, setExpanded] = useState<Map<string, boolean>>(() => {
+    const m = new Map<string, boolean>();
+    for (const s of spans) m.set(s.id, true);
+    return m;
+  });
+  const toggleExpand = useCallback((id: string) => {
+    setExpanded(prev => {
+      const next = new Map(prev);
+      next.set(id, !(next.get(id) ?? true));
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const m = new Map<string, boolean>();
+    for (const s of spans) m.set(s.id, true);
+    setExpanded(m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset on run switch only
+  }, [runId]);
 
   useEffect(() => {
     if (controlled || !runId || autoSelectedRunRef.current === runId) return;
@@ -415,6 +323,68 @@ export function SpanTree({
 
   const selectedSpan = selectedId ? spanMap.get(selectedId) : null;
 
+  // Recursive nested-DOM renderer (F-004.1): children render INSIDE the
+  // parent's wrapper div, not as flat siblings. Wrapper div is load-bearing.
+  const renderNode = (span: Span, depth: number): React.ReactNode => {
+    const kids = children.get(span.id) ?? [];
+    const hasChildren = kids.length > 0;
+    const isExpanded = expanded.get(span.id) ?? true;
+    const spanAnnotations = annotationsBySpan.get(span.id) ?? [];
+    return (
+      <div key={span.id}>
+        <SpanRow
+          span={span} depth={depth}
+          minTime={minTime} totalDur={totalDur}
+          selected={span.id === selectedId}
+          flashing={span.id === flashId}
+          onClick={() => setSelectedId(span.id === selectedId ? null : span.id)}
+          onContextMenu={onCreateAnnotation ? (e, s) => setContextMenu({ spanId: s.id, x: e.clientX, y: e.clientY }) : undefined}
+          annotations={spanAnnotations}
+          freshIds={freshIds}
+          onClearFresh={onClearFresh}
+          subAgents={subAgents}
+          chevron={hasChildren ? (isExpanded ? "expanded" : "collapsed") : null}
+          childCount={kids.length}
+          onChevronClick={hasChildren ? () => toggleExpand(span.id) : undefined}
+        />
+        {addingForSpan === span.id && onCreateAnnotation && (
+          <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40 }}>
+            <InlineCreateForm
+              compact
+              onCancel={() => setAddingForSpan(null)}
+              onSubmit={async ({ kind, note }) => {
+                await onCreateAnnotation({ span_id: span.id, kind, note, source: "user" });
+                setAddingForSpan(null);
+              }}
+            />
+          </div>
+        )}
+        {/* Expanded annotation cards for this span when selected */}
+        {selectedId === span.id && spanAnnotations.length > 0 && (
+          <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40, display: "flex", flexDirection: "column", gap: 4 }}>
+            {spanAnnotations.map((a) => {
+              const st = KIND_STYLES[a.kind];
+              return (
+                <div key={a.id} style={{ padding: "7px 9px", border: `1px solid ${st.border}`, background: `linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015)), ${st.bg}`, borderRadius: 8, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1, fontSize: 11, color: C.fg4, lineHeight: 1.45 }}>
+                    <span style={{ color: C.fg0, fontSize: 10, marginRight: 6 }}>
+                      {SOURCE_GLYPH[a.source]} {annotationSourceLabel(a.source)}
+                    </span>
+                    {a.note ? <DeepLinkedText text={a.note} /> : <em style={{ color: C.fg0 }}>(no note)</em>}
+                  </div>
+                  {onDeleteAnnotation && (
+                    <button onClick={(e) => { e.stopPropagation(); onDeleteAnnotation(a.id); }} title="Delete" style={{ background: "transparent", border: 0, color: C.fg0, fontSize: 13, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>×</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {isExpanded && kids.map(kid => renderNode(kid, depth + 1))}
+      </div>
+    );
+  };
+
   if (flat.length === 0) return <div style={{ color: C.fg1 }}>No spans</div>;
 
   return (
@@ -436,55 +406,7 @@ export function SpanTree({
             <div className="flex-1 text-[9px] uppercase tracking-wider font-medium" style={{ color: C.fg0 }}>Timeline</div>
             <div className="text-[9px] uppercase tracking-wider font-medium text-right pr-3" style={{ color: C.fg0, width: 55 }}>Dur</div>
           </div>
-          {flat.map(({ span, depth }) => (
-            <div key={span.id}>
-              <SpanRow
-                span={span} depth={depth}
-                minTime={minTime} totalDur={totalDur}
-                selected={span.id === selectedId}
-                flashing={span.id === flashId}
-                onClick={() => setSelectedId(span.id === selectedId ? null : span.id)}
-                onContextMenu={onCreateAnnotation ? (e, s) => setContextMenu({ spanId: s.id, x: e.clientX, y: e.clientY }) : undefined}
-                annotations={annotationsBySpan.get(span.id) ?? []}
-                freshIds={freshIds}
-                onClearFresh={onClearFresh}
-                subAgents={subAgents}
-              />
-              {addingForSpan === span.id && onCreateAnnotation && (
-                <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40 }}>
-                  <InlineCreateForm
-                    compact
-                    onCancel={() => setAddingForSpan(null)}
-                    onSubmit={async ({ kind, note }) => {
-                      await onCreateAnnotation({ span_id: span.id, kind, note, source: "user" });
-                      setAddingForSpan(null);
-                    }}
-                  />
-                </div>
-              )}
-              {/* Expanded annotation cards for this span when selected */}
-              {selectedId === span.id && (annotationsBySpan.get(span.id) ?? []).length > 0 && (
-                <div style={{ padding: "4px 10px 6px", paddingLeft: depth * 14 + 40, display: "flex", flexDirection: "column", gap: 4 }}>
-                  {(annotationsBySpan.get(span.id) ?? []).map((a) => {
-                    const st = KIND_STYLES[a.kind];
-                    return (
-                      <div key={a.id} style={{ padding: "7px 9px", border: `1px solid ${st.border}`, background: `linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015)), ${st.bg}`, borderRadius: 8, display: "flex", alignItems: "flex-start", gap: 8 }}>
-                        <div style={{ flex: 1, fontSize: 11, color: C.fg4, lineHeight: 1.45 }}>
-                          <span style={{ color: C.fg0, fontSize: 10, marginRight: 6 }}>
-                            {SOURCE_GLYPH[a.source]} {annotationSourceLabel(a.source)}
-                          </span>
-                          {a.note ? <DeepLinkedText text={a.note} /> : <em style={{ color: C.fg0 }}>(no note)</em>}
-                        </div>
-                        {onDeleteAnnotation && (
-                          <button onClick={(e) => { e.stopPropagation(); onDeleteAnnotation(a.id); }} title="Delete" style={{ background: "transparent", border: 0, color: C.fg0, fontSize: 13, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>×</button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
+          {roots.map(root => renderNode(root, 0))}
         </div>
         {contextMenu && onCreateAnnotation && (
           <SpanContextMenu

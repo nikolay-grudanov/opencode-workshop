@@ -38,7 +38,8 @@ function inferSpanType(
   hasToolName = false,
   raindropSpanKind?: string,
   attrs: Record<string, string | number | boolean> = {},
-): "LLM_GENERATION" | "TOOL_CALL" | "AGENT_ROOT" | "TRACE" | "INTERNAL" {
+  spanName?: string,
+): "LLM_GENERATION" | "TOOL_CALL" | "AGENT_ROOT" | "TRACE" | "INTERNAL" | "CHAIN" | "RETRIEVER" | "EMBEDDING" {
   // The SDK is the source of truth when it has declared a role explicitly via
   // `raindrop.span.kind`. Trusting the tag — instead of pattern-matching on
   // operation names — is what lets Workshop be a "dumb" consumer: the
@@ -48,6 +49,16 @@ function inferSpanType(
   if (raindropSpanKind === "trace") return "TRACE";
   if (raindropSpanKind === "llm_call") return "LLM_GENERATION";
   if (raindropSpanKind === "tool_call") return "TOOL_CALL";
+
+  // OTel GenAI semantic-conventions `gen_ai.span.kind` attribute. LangChain,
+  // LlamaIndex, and other pipeline-oriented SDKs stamp this on chain /
+  // retriever spans where the raindrop SDK has no presence. "embedding" is
+  // grouped here for symmetry even though OTel GenAI SC doesn't formally
+  // list it — some vendor instrumentation emits it.
+  const genAiSpanKind = attrs["gen_ai.span.kind"];
+  if (genAiSpanKind === "chain") return "CHAIN";
+  if (genAiSpanKind === "retriever") return "RETRIEVER";
+  if (genAiSpanKind === "embedding") return "EMBEDDING";
 
   // Fallback heuristics for spans that don't carry `raindrop.span.kind` —
   // older SDK versions, third-party AI SDKs, raw Traceloop instrumentation,
@@ -65,6 +76,19 @@ function inferSpanType(
     if (operationId.includes("Stream") || operationId.includes("Generate") ||
         operationId.includes("stream") || operationId.includes("generate")) return "LLM_GENERATION";
   }
+
+  // Last-resort name-pattern match for pipeline spans from SDKs that neither
+  // set `raindrop.span.kind` nor `gen_ai.span.kind`. Case-insensitive so we
+  // catch "Chain", "RetrieverChain", "openai_embedding", etc. Checked AFTER
+  // the LLM/tool heuristics so a name like "generateEmbeddings" still wins
+  // as an LLM_GENERATION when the attrs already indicate inference.
+  if (typeof spanName === "string" && spanName.length > 0) {
+    const lower = spanName.toLowerCase();
+    if (lower.includes("chain")) return "CHAIN";
+    if (lower.includes("retriever")) return "RETRIEVER";
+    if (lower.includes("embedding")) return "EMBEDDING";
+  }
+
   return "INTERNAL";
 }
 
@@ -142,7 +166,7 @@ export function parseOtlpRequest(body: any): ParsedSpan[] {
         const traceloopKind = getAttr(attrs, "traceloop.span.kind") as string | undefined;
         const raindropSpanKind = getAttr(attrs, "raindrop.span.kind") as string | undefined;
         const toolCallName = first(attrs, "ai.toolCall.name", "tool.name", "lk.function_tool.name") as string | undefined;
-        const spanType = inferSpanType(operationId, traceloopKind, !!toolCallName, raindropSpanKind, allAttrs);
+        const spanType = inferSpanType(operationId, traceloopKind, !!toolCallName, raindropSpanKind, allAttrs, s.name);
 
         // For tool calls, prefer the actual tool name over generic wrapper
         // span names like "ai.toolCall" or Traceloop's "foo.tool".
@@ -156,10 +180,16 @@ export function parseOtlpRequest(body: any): ParsedSpan[] {
         // Adapters know which attributes hold the canonical input/output payload
         // for their SDK and produce a typed `normalized` view in a single pass,
         // so downstream consumers don't need to coalesce or try/catch-and-guess.
+        // AdapterInput.spanType union predates CHAIN/RETRIEVER/EMBEDDING; collapse
+        // to INTERNAL at this boundary (adapters bail on all four the same way).
+        const adapterSpanType =
+          spanType === "CHAIN" || spanType === "RETRIEVER" || spanType === "EMBEDDING"
+            ? "INTERNAL"
+            : spanType;
         const match = normalizeSpan({
           spanName: name,
           attrs: allAttrs,
-          spanType,
+          spanType: adapterSpanType,
           operationId,
           traceloopKind,
         });
