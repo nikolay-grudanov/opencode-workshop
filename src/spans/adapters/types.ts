@@ -35,7 +35,7 @@ export interface AdapterMatch {
   /**
    * What to store as the canonical raw input string in the DB. The adapter
    * picks because it knows which attribute is the "real" payload for its
-   * SDK (e.g. `ai.prompt.messages` for AI SDK, `ai.prompt` for claude-agent-sdk).
+   * SDK (e.g. `ai.prompt.messages` for AI SDK, `ai.prompt` for raw-string fallback).
    * Optional — fall back to the dispatcher's pre-coalesced default if absent.
    */
   inputPayload?: string;

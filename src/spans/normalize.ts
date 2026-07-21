@@ -15,7 +15,6 @@
  *
  * Order matters: more-specific adapters go before less-specific ones.
  *   - `aiSdkLlmAdapter` matches structured prompts (JSON `ai.prompt(.messages)`)
- *   - `claudeAgentSdkLlmAdapter` is the raw-string fallback
  *   - `traceloopLlmAdapter` looks for the traceloop discriminator
  *   - tool adapters key off `spanType === "TOOL_CALL"`
  *   - TRACE wrappers intentionally normalize to `{ kind: "other" }`
@@ -25,7 +24,6 @@
 import type { AdapterInput, AdapterMatch, SpanAdapter } from "./adapters/types";
 import { emptyNormalized } from "./normalized";
 import { aiSdkLlmAdapter, aiSdkToolAdapter } from "./adapters/ai-sdk";
-import { claudeAgentSdkLlmAdapter } from "./adapters/claude-agent-sdk";
 import { livekitLlmAdapter, livekitToolAdapter } from "./adapters/livekit";
 import { traceloopLlmAdapter, traceloopToolAdapter } from "./adapters/traceloop";
 
@@ -33,7 +31,6 @@ const ADAPTERS: SpanAdapter[] = [
   aiSdkLlmAdapter,
   livekitLlmAdapter,
   traceloopLlmAdapter,
-  claudeAgentSdkLlmAdapter,
   aiSdkToolAdapter,
   livekitToolAdapter,
   traceloopToolAdapter,
