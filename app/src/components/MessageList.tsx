@@ -6,10 +6,10 @@ import type { Message } from "../utils/messageParsing";
 export { parseMessages, messagesFromSpan };
 
 const ROLE_STYLES: Record<string, { bg: string; border: string; text: string; label: string }> = {
-  system:    { bg: "rgba(255,255,255,0.08)", border: "rgba(255,255,255,0.13)", text: "#b0bcc2", label: "#7d8a90" },
+  system:    { bg: "rgba(60,90,130,0.10)",   border: "rgba(60,90,130,0.22)",  text: "#c8d5dc", label: "#7BA3C7" },
   user:      { bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.07)", text: "#c8d5dc", label: "#9aa5ab" },
-  assistant: { bg: "rgba(255,255,255,0.025)", border: "rgba(255,255,255,0.06)", text: "#c8d5dc", label: "#9aa5ab" },
-  tool:      { bg: "rgba(165,124,245,0.03)",  border: "rgba(165,124,245,0.08)", text: "#b0bcc2", label: "#A57CF5" },
+  assistant: { bg: "rgba(240,173,78,0.06)",  border: "rgba(240,173,78,0.18)", text: "#e1d6c2", label: "#F0AD4E" },
+  tool:      { bg: "rgba(165,124,245,0.03)", border: "rgba(165,124,245,0.08)", text: "#b0bcc2", label: "#A57CF5" },
 };
 
 function MessageBubble({ msg, defaultExpanded }: { msg: Message; defaultExpanded: boolean }) {
