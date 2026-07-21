@@ -1512,26 +1512,27 @@ export async function createServer(port: number) {
     res.json({ ok: true, runId: run.id });
   });
 
-  // Summarize an event using Haiku (server-side to avoid CORS)
   app.post("/api/summarize", async (req, res) => {
     const { content } = req.body;
     if (!content) { res.status(400).json({ error: "content is required" }); return; }
-    const key = getEffectiveSecret("anthropic");
-    if (!key) { res.status(400).json({ error: "No Anthropic API key" }); return; }
+    const key = getEffectiveSecret("openai");
+    if (!key) { res.status(400).json({ error: "No OpenAI API key" }); return; }
     try {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
         body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
+          model: "gpt-4o-mini",
           max_tokens: 200,
-          system: "Summarize this AI agent interaction in 1-2 sentences. Focus on what user asked and what happened (tools used, outcome). Be specific and brief. Avoid unnecessary articles like 'the', 'a', 'an' — write in a terse, telegraphic style.",
-          messages: [{ role: "user", content }],
+          messages: [
+            { role: "system", content: "Summarize this AI agent interaction in 1-2 sentences. Focus on what user asked and what happened (tools used, outcome). Be specific and brief. Avoid unnecessary articles like 'the', 'a', 'an' — write in a terse, telegraphic style." },
+            { role: "user", content },
+          ],
         }),
       });
-      if (!r.ok) { const b = await r.json().catch(() => null); res.status(r.status).json({ error: b?.error?.message ?? `Anthropic error ${r.status}` }); return; }
+      if (!r.ok) { const b = await r.json().catch(() => null); res.status(r.status).json({ error: b?.error?.message ?? `OpenAI error ${r.status}` }); return; }
       const data = await r.json();
-      const text = data.content?.find((b: any) => b.type === "text")?.text?.trim() ?? "";
+      const text = data.choices?.[0]?.message?.content?.trim() ?? "";
       res.json({ summary: text });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Summarization failed" });
@@ -1629,12 +1630,10 @@ export async function createServer(port: number) {
     const requestedModel = typeof body.model === "string" && body.model.trim()
       ? body.model.trim()
       : null;
-    const model = requestedModel ?? continuation.model ?? "claude-sonnet-4-20250514";
+    const model = requestedModel ?? continuation.model ?? "gpt-4o";
     const provider = detectProvider(model, continuation.provider);
     const env = providerEnvForProvider(provider);
-    const apiKey = provider === "openai"
-      ? getEffectiveSecret("openai")
-      : getEffectiveSecret("anthropic");
+    const apiKey = getEffectiveSecret("openai");
 
     if (!apiKey) {
       res.json({
@@ -1643,7 +1642,7 @@ export async function createServer(port: number) {
         provider,
         env_var: env.envVar,
         cwd: workspace?.cwd ?? null,
-        message: `Add a ${provider === "openai" ? "OpenAI" : "Anthropic"} API key in Workshop Settings, or set ${env.envVar}=... and restart Workshop.`,
+        message: `Add an OpenAI API key in Workshop Settings, or set ${env.envVar}=... and restart Workshop.`,
       });
       return;
     }
@@ -1657,18 +1656,12 @@ export async function createServer(port: number) {
     const requestBody: Record<string, any> = {
       model,
       stream: false,
-    };
-    if (provider === "openai") {
-      requestBody.messages = [
+      messages: [
         { role: "system", content: continuation.systemPrompt },
         ...contextMessages,
-      ];
-      requestBody.max_completion_tokens = 4096;
-    } else {
-      requestBody.system = continuation.systemPrompt;
-      requestBody.messages = contextMessages;
-      requestBody.max_tokens = 4096;
-    }
+      ],
+      max_completion_tokens: 4096,
+    };
 
     const apiHeaders = getProviderHeaders(provider, apiKey);
     Object.assign(apiHeaders, continuation.providerHeaders);
@@ -1745,7 +1738,7 @@ export async function createServer(port: number) {
           userMessage,
           model,
           systemPrompt,
-          apiKey: getEffectiveSecret("anthropic") ?? undefined,
+          apiKey: undefined,
           openaiKey: getEffectiveSecret("openai") ?? undefined,
           maxIterations,
           contextOverrides,
@@ -1957,8 +1950,8 @@ function cleanProviderMessage(message: any): Record<string, any> {
   return clean;
 }
 
-function providerEnvForProvider(provider: string): { envVar: "OPENAI_API_KEY" | "ANTHROPIC_API_KEY" } {
-  return provider === "openai" ? { envVar: "OPENAI_API_KEY" } : { envVar: "ANTHROPIC_API_KEY" };
+function providerEnvForProvider(_provider: string): { envVar: "OPENAI_API_KEY" } {
+    return { envVar: "OPENAI_API_KEY" };
 }
 
 function answerFromProviderResponse(body: Record<string, any> | null, text: string): string {

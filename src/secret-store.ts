@@ -5,10 +5,6 @@ import path from "path";
 export const RAINDROP_SECRET_STORE_PATH_ENV = "RAINDROP_WORKSHOP_SECRET_STORE_PATH";
 
 export const SECRET_DEFS = {
-  anthropic: {
-    label: "Anthropic",
-    envVars: ["ANTHROPIC_API_KEY"],
-  },
   openai: {
     label: "OpenAI",
     envVars: ["OPENAI_API_KEY", "RAINDROP_OPENAI_API_KEY"],

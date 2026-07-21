@@ -17,9 +17,7 @@ export interface DetectInstallAgentsOptions {
 }
 
 export const APPROVED_AGENTS: readonly InstallAgentId[] = [
-  "claude-code",
   "cursor",
-  "codex",
   "opencode",
   "amp",
   "windsurf",
