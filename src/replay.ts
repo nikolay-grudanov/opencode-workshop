@@ -41,7 +41,7 @@ function missingAgentEndpointMessage(eventName: string): string {
  * every span via the adapter dispatcher (`src/spans/`); this function only
  * picks the most informative LLM span and reads its fields.
  */
-function extractContext(spans: any[]) {
+export function extractContext(spans: any[]) {
   const allLLMs = spans.filter((s: any) => s.span_type?.includes("LLM"));
 
   // Pick the LLM span with the longest serialized input — that's almost

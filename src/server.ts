@@ -13,6 +13,8 @@ import { sliceSpanPayload } from "./payload-slice";
 import { detectSubAgents } from "./agents";
 import { applyProviderOptions, detectProvider, getProviderBaseURL, getProviderHeaders } from "./provider-options";
 import { runReplay } from "./replay";
+import { loadExportShape } from "./export/run-to-export-shape";
+import { renderSessionHtml } from "./export/html-export";
 import { discoverReplayAgents, loadAgentsConfig, saveAgentsConfig, extractContextFromTrace, registerReplayProjectIfPresent } from "./agents-config";
 import { resolveBuiltAppDir } from "./ui-assets";
 import { setReplayTrace } from "./replay-map";
@@ -1060,6 +1062,27 @@ export async function createServer(port: number) {
     const out = getRunOutline(req.params.id, preview);
     if (!out.run) { res.status(404).json({ error: "Not found" }); return; }
     res.json(out);
+  });
+  app.get("/api/runs/:id/export", async (req, res) => {
+    const id = req.params.id;
+    if (!id) { res.status(404).type("text/html; charset=utf-8").send("Not found"); return; }
+    let exportShape;
+    try {
+      exportShape = await loadExportShape(id);
+    } catch {
+      res.status(404).type("text/html; charset=utf-8").send("Not found");
+      return;
+    }
+    const theme = req.query.theme === "light" ? "light" : "dark";
+    let palette: Record<string, string> | undefined;
+    if (typeof req.query.palette === "string" && req.query.palette) {
+      try { palette = JSON.parse(req.query.palette) as Record<string, string>; } catch { /* ignore invalid palette */ }
+    }
+    const html = renderSessionHtml(exportShape, theme, palette);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="run-${id.slice(0, 8)}.html"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).send(html);
   });
   app.get("/api/runs/:id/spans", (req, res) => {
     const opts: any = { filter: {} };
