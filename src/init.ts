@@ -194,7 +194,7 @@ export async function cmdSetup(argv: string[]): Promise<number> {
 
   try {
     if (!args.explicit && interactive) {
-      const { plan, skipped, scope } = await runInstallWizard({ cwd: args.cwd, input: ttyInput ?? undefined });
+      const { plan, skipped, scope: _scope } = await runInstallWizard({ cwd: args.cwd, input: ttyInput ?? undefined });
       if (skipped) return 0;
       const result = await applyInstallPlan(plan, {
         binPath: args.binPath ?? undefined,
