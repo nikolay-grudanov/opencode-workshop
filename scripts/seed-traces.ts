@@ -74,8 +74,8 @@ function runMeta(eventName: string, convoId: string, userId = "demo-user"): Attr
 function llmAttrs(prompt: unknown, response: string, inTok: number, outTok: number): Attr[] {
   return [
     str("ai.operationId", "ai.generateText"),
-    str("ai.model.id", "claude-sonnet-4-5"),
-    str("ai.model.provider", "anthropic"),
+    str("ai.model.id", "gpt-4o"),
+    str("ai.model.provider", "openai"),
     str("ai.prompt", JSON.stringify(prompt)),
     str("ai.response.text", response),
     int("ai.usage.inputTokens", inTok),
