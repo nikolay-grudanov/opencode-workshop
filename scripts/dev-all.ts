@@ -90,68 +90,6 @@ function ensureWorkshopUi(): void {
   }
 }
 
-// `@anthropic-ai/claude-agent-sdk` declares both `@anthropic-ai/claude-agent-sdk-linux-x64`
-// (glibc) and `@anthropic-ai/claude-agent-sdk-linux-x64-musl` (musl) as
-// optional native deps. Bun's resolver installs *both* regardless of the
-// host's libc, and the SDK's binary lookup walks them in order
-// `[…-musl, …(glibc)]`, returning the first one whose path resolves. On a
-// glibc host the musl binary's dynamic linker (`/lib/ld-musl-x86_64.so.1`)
-// is missing, so when the SDK's child process spawns we get the user-facing
-// error: "Claude Code native binary not found at …-linux-x64-musl/claude."
-//
-// `.devin/setup.sh` already prunes the wrong variant at install time, but
-// per-example `bun install --silent` runs (via `ensureBunDeps`) can pull
-// it back into the example's own `node_modules/`. Re-prune on every boot
-// so dev:examples is idempotent against state drift.
-function pruneWrongClaudeAgentSdkLibcVariant(): void {
-  if (process.platform !== "linux") return;
-  let hostLibc: "musl" | "glibc";
-  try {
-    const lddVersion = spawnSync(["ldd", "--version"]);
-    const out = (
-      new TextDecoder().decode(lddVersion.stdout) +
-      new TextDecoder().decode(lddVersion.stderr)
-    ).toLowerCase();
-    hostLibc = out.includes("musl") ? "musl" : "glibc";
-  } catch {
-    hostLibc = "glibc";
-  }
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  const wrongVariant =
-    hostLibc === "glibc"
-      ? `claude-agent-sdk-linux-${arch}-musl`
-      : `claude-agent-sdk-linux-${arch}`;
-
-  const queue: string[] = [REPO_ROOT];
-  while (queue.length > 0) {
-    const dir = queue.pop()!;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const child = path.join(dir, e.name);
-      if (e.name === "node_modules") {
-        const wrong = path.join(child, "@anthropic-ai", wrongVariant);
-        if (fs.existsSync(wrong)) {
-          console.log(
-            `\x1b[2m  Removing ${wrongVariant} native binary at ${wrong} (host is ${hostLibc})\x1b[0m`,
-          );
-          fs.rmSync(wrong, { recursive: true, force: true });
-        }
-        // Don't recurse into node_modules — only top-level node_modules trees
-        // own these optional deps, and walking deep is expensive.
-        continue;
-      }
-      if (e.name === ".git" || e.name.startsWith(".")) continue;
-      queue.push(child);
-    }
-  }
-}
-
 // macOS ships `python3` → 3.9, too old for raindrop-ai (requires ≥ 3.10);
 // prefer a Homebrew `python3.12` / `python3.13` when one is on PATH.
 function pickPython3(): string | null {
@@ -267,10 +205,8 @@ const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const EXAMPLE_APPS: ExampleApp[] = [
   { name: "ai-sdk-chat", port: 3011, label: "AI SDK chat" },
   { name: "openai-chat", port: 3012, label: "OpenAI chat" },
-  { name: "anthropic-chat", port: 3013, label: "Anthropic chat" },
   { name: "ai-sdk-otelv2", port: 3014, label: "AI SDK (OTel v2)" },
   { name: "browser-chat", port: 3016, label: "Browser SDK chat" },
-  { name: "claude-agent-sdk", port: 3015, label: "Claude Agent SDK" },
   {
     name: "python-chat",
     port: 3017,
@@ -389,12 +325,6 @@ async function main(): Promise<void> {
     const err = ensureBunDeps(app, cwd) ?? ensurePythonVenv(app, cwd);
     if (err) installFailures.set(app.name, err);
   }
-
-  // Per-example `bun install --silent` above may have re-introduced the
-  // wrong libc variant of @anthropic-ai/claude-agent-sdk's native binary
-  // into examples/claude-agent-sdk/node_modules/. Re-prune now so the SDK
-  // picks the binary that actually runs on this host.
-  pruneWrongClaudeAgentSdkLibcVariant();
 
   for (let idx = 0; idx < EXAMPLE_APPS.length; idx++) {
     const app = EXAMPLE_APPS[idx];
