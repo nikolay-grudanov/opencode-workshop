@@ -24,7 +24,6 @@ minimumReleaseAgeExcludes = [
   "raindrop-ai",
   "@raindrop-ai/ai-sdk",
   "@raindrop-ai/browser-sdk",
-  "@raindrop-ai/claude-agent-sdk",
   "@raindrop-ai/opencode-plugin",
   "@raindrop-ai/pi-agent",
 ]
