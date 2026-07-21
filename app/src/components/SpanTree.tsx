@@ -212,6 +212,8 @@ interface SpanTreeProps {
   viewMode?: SpanViewMode;
   /** When set, viewMode is controlled by the parent (e.g. RunDetail). */
   onViewModeChange?: (mode: SpanViewMode) => void;
+  /** When set, the in-tree SubAgentBlock section shows an "Open Sub-Agent →" button that dives into the agent. */
+  onDiveIn?: (rootSpanId: string) => void;
 }
 
 interface ContextMenuState {
@@ -234,6 +236,7 @@ export function SpanTree({
   onDeleteAnnotation,
   viewMode: viewModeProp,
   onViewModeChange,
+  onDiveIn,
 }: SpanTreeProps) {
   const controlled = onSelectSpan !== undefined;
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
@@ -478,7 +481,7 @@ export function SpanTree({
             <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5" style={{ borderBottom: `1px solid ${C.border}`, background: "rgba(212,168,87,0.04)" }} data-testid="span-tree-subagent-block">
               <span className="text-[9px] uppercase tracking-wider font-medium" style={{ color: "#d4a857" }}>Sub-agents</span>
               {subAgents.map((agent) => (
-                <SubAgentBlock key={agent.root_span_id} agent={agent} spans={spans} />
+                <SubAgentBlock key={agent.root_span_id} agent={agent} spans={spans} onDiveIn={onDiveIn} />
               ))}
             </div>
           )}

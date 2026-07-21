@@ -154,9 +154,21 @@ function SpanTooltip({
   );
 }
 
-export function FlameTimeline({ spans, viewMode = "nested" }: { spans: Span[]; viewMode?: SpanViewMode }) {
+export function FlameTimeline({
+  spans,
+  viewMode = "nested",
+  subAgents: subAgentsProp,
+  onDiveIn,
+}: {
+  spans: Span[];
+  viewMode?: SpanViewMode;
+  subAgents?: SubAgent[];
+  onDiveIn?: (rootSpanId: string) => void;
+}) {
   const vizSpans = useMemo(() => spans.filter(s => s.span_type === "TRACE" || s.span_type === "TOOL_CALL" || s.span_type?.includes("LLM")), [spans]);
-  const subAgents = useMemo(() => detectSubAgents(spans), [spans]);
+  const detectedSubAgents = useMemo(() => detectSubAgents(spans), [spans]);
+  const subAgents = subAgentsProp ?? detectedSubAgents;
+  const subAgentRootIds = useMemo(() => new Set(subAgents.map(a => a.root_span_id)), [subAgents]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerW, setContainerW] = useState(0);
   const [hovered, setHovered] = useState<{ span: Span; rect: DOMRect } | null>(null);
@@ -284,9 +296,7 @@ export function FlameTimeline({ spans, viewMode = "nested" }: { spans: Span[]; v
             const firstToolSpan = firstToolSpanByName.get(name);
             const labelHovered = hoveredLabelName === name;
             const firstSpanForColor = firstToolSpan ?? vizSpans.find(s => s.name === name);
-            const labelColor = firstSpanForColor
-              ? SPAN_TYPE_COLORS[spanTypeFromRaw(firstSpanForColor.span_type)]
-              : C.fg0;
+            const labelColor = firstSpanForColor ? spanTypeInfo(firstSpanForColor, subAgents).color : C.fg0;
             const label = (
               <div
                 className={`flex items-center px-3 text-[10px] font-mono min-w-0 ${labelColumnCapped ? "truncate" : "whitespace-nowrap"}`}
@@ -334,6 +344,29 @@ export function FlameTimeline({ spans, viewMode = "nested" }: { spans: Span[]; v
           }}
         >
         <div style={{ position: "relative", width: chartW, height: totalH }}>
+          {/* Sub-agent time bands — translucent gold columns spanning each agent's [start, end] */}
+          {subAgents.map((a) => {
+            const bandStart = Math.max(a.start_time_ms, minT);
+            const bandEnd = Math.min(a.end_time_ms, maxT);
+            if (bandEnd <= bandStart) return null;
+            return (
+              <div
+                key={`band-${a.root_span_id}`}
+                data-testid="flame-subagent-band"
+                style={{
+                  position: "absolute",
+                  left: (bandStart - minT) * pxPerMs,
+                  width: Math.max((bandEnd - bandStart) * pxPerMs, 2),
+                  top: 0,
+                  height: rowCount * ROW,
+                  background: "rgba(212,168,87,0.07)",
+                  borderLeft: "1px solid rgba(212,168,87,0.25)",
+                  pointerEvents: "none",
+                }}
+              />
+            );
+          })}
+
           {/* Grid */}
           {Array.from({ length: Math.ceil(dur / gridMs) + 1 }, (_, i) => {
             const x = i * gridMs * pxPerMs;
@@ -354,13 +387,21 @@ export function FlameTimeline({ spans, viewMode = "nested" }: { spans: Span[]; v
             const row = rowOfSpan(span);
             const left = (span.start_time_ms - minT) * pxPerMs;
             const w = Math.max((span.end_time_ms - span.start_time_ms) * pxPerMs, BAR_H);
-            const color = span.span_type?.includes("LLM") ? LLM_BAR_COLOR : SPAN_TYPE_COLORS[spanTypeFromRaw(span.span_type)];
+            const isSubAgentRoot = span.span_type === "TOOL_CALL" && subAgentRootIds.has(span.id);
+            const color = isSubAgentRoot
+              ? SPAN_TYPE_COLORS.SUB_AGENT_ROOT
+              : span.span_type?.includes("LLM")
+                ? LLM_BAR_COLOR
+                : SPAN_TYPE_COLORS[spanTypeFromRaw(span.span_type)];
             const isErr = span.status === "ERROR";
             const isLLM = span.span_type?.includes("LLM");
             const focusBarTool = () => {
-              if (span.span_type === "TOOL_CALL") {
-                focusTool(span.id);
+              if (span.span_type !== "TOOL_CALL") return;
+              if (isSubAgentRoot && onDiveIn) {
+                onDiveIn(span.id);
+                return;
               }
+              focusTool(span.id);
             };
             // Small error spans → red warning triangle
             if (isErr && w < 40) {
@@ -381,6 +422,7 @@ export function FlameTimeline({ spans, viewMode = "nested" }: { spans: Span[]; v
             }
             return (
               <div key={span.id} className="timeline-bar absolute rounded-full flex items-center justify-center cursor-pointer"
+                data-testid={isSubAgentRoot ? "flame-subagent-bar" : undefined}
                 style={{ left, top: row * ROW + BAR_Y_OFF, width: w, height: BAR_H, backgroundColor: isErr ? C.red : color, zIndex: idx, border: isLLM ? "1px solid rgba(255,255,255,0.12)" : "1.5px solid #000", boxSizing: "border-box" }}
                 onMouseEnter={(e) => handleBarEnter(span, e)}
                 onMouseLeave={handleBarLeave}

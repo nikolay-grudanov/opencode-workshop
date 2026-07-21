@@ -267,9 +267,10 @@ function fixtureToolRecovery() {
 }
 
 /**
- * 3. Sub-agent — main agent spawns a code-review sub-agent. The subagent has
- *    its own LLM + tool children under a parent span named "subagent.review".
- *    Exercises the AgentGraph view.
+ * 3. Sub-agent — main agent spawns a code-review sub-agent, which itself spawns
+ *    a nested lint sub-agent. Roots carry `ai.toolCall.name` so ingest classifies
+ *    them TOOL_CALL, and each root's tool grandchild sits under its LLM child so
+ *    detectSubAgents fires (TOOL_CALL > LLM > TOOL_CALL). Exercises drill-down.
  */
 function fixtureSubAgent() {
   const tid = traceId(3);
@@ -320,6 +321,7 @@ function fixtureSubAgent() {
         startMs: t + 950, endMs: t + 4100, statusCode: 1,
         attrs: [
           ...meta,
+          str("ai.toolCall.name", "subagent.review"),
           str("raindrop.subagent.name", "code-reviewer"),
           str("traceloop.entity.input", "Review this diff for auth/session.ts"),
           str("traceloop.entity.output", "LGTM, one nit at line 57."),
@@ -338,7 +340,7 @@ function fixtureSubAgent() {
         ],
       },
       {
-        spanId: spanId(3, 6), parentSpanId: sub, name: "ai.toolCall",
+        spanId: spanId(3, 6), parentSpanId: spanId(3, 5), name: "ai.toolCall",
         startMs: t + 2820, endMs: t + 2980, statusCode: 1,
         attrs: [
           ...meta,
@@ -358,6 +360,43 @@ function fixtureSubAgent() {
             { messages: [{ role: "tool", content: "session.ts:57 retry loop" }] },
             "LGTM. Nit at span_id: 0000000300000006 — consider backoff.",
             310, 22,
+          ),
+        ],
+      },
+      {
+        // Nested sub-agent: the reviewer delegates linting one level deeper.
+        // Parented under llm 3,7 so the reviewer root satisfies TOOL > LLM > TOOL.
+        spanId: spanId(3, 9), parentSpanId: spanId(3, 7), name: "subagent.lint",
+        startMs: t + 3100, endMs: t + 4000, statusCode: 1,
+        attrs: [
+          ...meta,
+          str("ai.toolCall.name", "subagent.lint"),
+          str("raindrop.subagent.name", "lint-checker"),
+          str("traceloop.entity.input", "Lint auth/session.ts"),
+          str("traceloop.entity.output", "0 errors, 1 warning (unused import)."),
+        ],
+      },
+      {
+        spanId: spanId(3, 10), parentSpanId: spanId(3, 9), name: "llm.generate",
+        startMs: t + 3150, endMs: t + 3550, statusCode: 1,
+        attrs: [
+          ...meta,
+          ...llmAttrs(
+            { messages: [{ role: "user", content: "Lint auth/session.ts" }] },
+            "Running eslint on the changed file.",
+            90, 11,
+          ),
+        ],
+      },
+      {
+        spanId: spanId(3, 11), parentSpanId: spanId(3, 10), name: "ai.toolCall",
+        startMs: t + 3600, endMs: t + 3900, statusCode: 1,
+        attrs: [
+          ...meta,
+          ...toolAttrs(
+            "bash",
+            { command: "eslint auth/session.ts" },
+            "1:1 warning unused-import 'crypto'",
           ),
         ],
       },

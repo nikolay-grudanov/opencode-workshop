@@ -150,7 +150,7 @@ test("workshop UI: switching between runs preserves each run's span tree", async
   await seedFixtures(workshop.url);
 
   const RUN_A = "00000000000000000000000000000001"; // 6 spans, agent.turn root
-  const RUN_B = "00000000000000000000000000000003"; // 8 spans, includes subagent.review
+  const RUN_B = "00000000000000000000000000000003"; // 11 spans, nested sub-agents (subagent.review > subagent.lint)
 
   const spansA = await readWorkshopSpans(workshop.url, RUN_A);
   const spansB = await readWorkshopSpans(workshop.url, RUN_B);
@@ -241,4 +241,54 @@ test("workshop UI: sub-agent root span shows gold badge, friendly label, and in-
   await page.locator(`[data-run-id="${FIXTURE_RUN_ID}"]`).click();
   await page.getByRole("button", { name: /^span tree$/i }).click();
   await expect(subAgentBlock).toHaveCount(0, { timeout: 5_000 });
+});
+
+test("workshop UI: sub-agent drill-down — focused view, breadcrumb chain, nested dive", async ({ page, workshop }) => {
+  await seedFixtures(workshop.url);
+
+  const RUN_B = "00000000000000000000000000000003";
+  await page.goto(`${workshop.url}/runs/${RUN_B}`);
+  await page.getByRole("button", { name: /^span tree$/i }).click();
+
+  const section = page.locator('[data-testid="span-tree-subagent-block"]');
+  await expect(section).toBeVisible({ timeout: 10_000 });
+  // The section maps ALL detected agents (SpanTree L483), not just top-level ones —
+  // review and nested lint both render as SubAgentBlocks inside this container.
+  await section.getByRole("button", { name: /subagent\.review/i }).click();
+  await page.getByRole("button", { name: /open sub-agent/i }).click();
+
+  await expect(page.getByRole("heading", { name: /subagent\.review/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "code-agent", exact: true })).toBeVisible();
+
+  // Session Tree tab appears in the focused view only when childAgents.length > 0 (RunDetail).
+  await page.getByRole("button", { name: /^session tree$/i }).click();
+  await expect(page.getByText("subagent.lint").first()).toBeVisible();
+  await page.getByRole("button", { name: /^open$/i }).click();
+
+  await expect(page.getByRole("button", { name: "code-agent", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "subagent.review", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /subagent\.lint/i })).toBeVisible();
+
+  await page.getByRole("button", { name: "code-agent", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^span tree$/i })).toBeVisible();
+});
+
+test("workshop UI: flame timeline shows gold sub-agent bands and click-to-dive", async ({ page, workshop }) => {
+  await seedFixtures(workshop.url);
+
+  const RUN_B = "00000000000000000000000000000003";
+  await page.goto(`${workshop.url}/runs/${RUN_B}`);
+
+  // Two sub-agents (outer + nested) → two time bands and two gold root bars on the run overview.
+  await expect(page.locator('[data-testid="flame-subagent-band"]')).toHaveCount(2, { timeout: 10_000 });
+  await expect(page.locator('[data-testid="flame-subagent-bar"]')).toHaveCount(2);
+
+  // Clicking a root bar dives into that sub-agent instead of focusing the span.
+  // Row order in the DOM isn't contractually alphabetical, so we don't assert which
+  // agent — only that the dive happens (focused heading + breadcrumb back control appear).
+  await page.locator('[data-testid="flame-subagent-bar"]').first().click();
+  await expect(page.getByRole("heading", { name: /subagent\.(review|lint)/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "code-agent", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "code-agent", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^overview$/i })).toBeVisible();
 });

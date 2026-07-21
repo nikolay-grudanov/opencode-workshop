@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   runPath,
@@ -458,7 +458,7 @@ function ViewHeader({
   run?: Run;
   source?: "local" | "cloud";
   isReplay?: boolean;
-  breadcrumb?: { onBack: () => void; parentName: string };
+  breadcrumb?: { onBack: () => void; parentName: string; ancestors?: { name: string; onSelect: () => void }[] };
   fork?: {
     onFork: (userMessage?: string, mode?: "local", modelOverride?: string, contextOverrides?: Record<string, any>) => void;
     userMessage?: string;
@@ -468,6 +468,7 @@ function ViewHeader({
 }) {
   const onBack = breadcrumb?.onBack;
   const parentName = breadcrumb?.parentName;
+  const ancestors = breadcrumb?.ancestors;
   const onFork = fork?.onFork;
   const userMessage = fork?.userMessage;
   const replayMeta = run ? parseReplayMetadata(run) : null;
@@ -549,7 +550,18 @@ function ViewHeader({
       {parentName && onBack ? (
         <>
           <div><Button onClick={onBack}>&larr; Show Parent Agent</Button></div>
-          <div className="mt-3 mb-1"><button className="text-[13px] font-medium cursor-pointer" style={{ color: C.fg1 }} onClick={onBack}>{parentName}</button></div>
+          {ancestors && ancestors.length > 0 ? (
+            <div className="mt-3 mb-1 flex items-center gap-1.5 flex-wrap">
+              {ancestors.map((a, i) => (
+                <Fragment key={`${a.name}-${i}`}>
+                  {i > 0 && <span style={{ color: C.fg0 }}>&rsaquo;</span>}
+                  <button className="text-[13px] font-medium cursor-pointer" style={{ color: C.fg1 }} onClick={a.onSelect}>{a.name}</button>
+                </Fragment>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-3 mb-1"><button className="text-[13px] font-medium cursor-pointer" style={{ color: C.fg1 }} onClick={onBack}>{parentName}</button></div>
+          )}
           <div className="flex items-start ml-1">
             <svg className="flex-shrink-0" width="12" height="24" viewBox="0 0 12 24" style={{ marginRight: 6, marginTop: 2 }}>
               <path d="M 1 0 L 1 16 L 12 16" fill="none" stroke={C.fg0} strokeWidth="1" />
@@ -1045,7 +1057,7 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
   const selectedSpanId = usesRouteState ? routeSelectedSpanId : localSelectedSpanId;
   const [loading, setLoading] = useState(!initialData);
   const [notFound, setNotFound] = useState(false);
-  const [agentTab, setAgentTab] = useState<"chat" | "tree">("chat");
+  const [agentTab, setAgentTab] = useState<"chat" | "tree" | "sessions">("chat");
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>(initialData?.liveEvents ?? []);
   const [anthropicModels, setAnthropicModels] = useState<string[]>([]);
   const annotationsApi = useAnnotations(runId);
@@ -1123,7 +1135,11 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
     window.addEventListener("workshop:deep-link-span", handler);
     return () => window.removeEventListener("workshop:deep-link-span", handler);
   }, [navigate, routeBase, runId]);
-  const [focusedAgent, setFocusedAgent] = useState<string | null>(null);
+  const [focusStack, setFocusStack] = useState<string[]>([]);
+  const focusedAgent = focusStack[focusStack.length - 1] ?? null;
+  const diveIntoAgent = useCallback((rootSpanId: string) => {
+    setFocusStack((s) => (s[s.length - 1] === rootSpanId ? s : [...s, rootSpanId]));
+  }, []);
   const [editModal, setEditModal] = useState<{ userMessage: string } | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -1152,7 +1168,7 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
     setLoading(true);
     setNotFound(false);
     setData(null);
-    setLiveEvents([]); setFocusedAgent(null); setAgentTab("chat"); setLocalTab("chat"); setLocalSelectedSpanId(null); setEditModal(null); fetchData();
+    setLiveEvents([]); setFocusStack([]); setAgentTab("chat"); setLocalTab("chat"); setLocalSelectedSpanId(null); setEditModal(null); fetchData();
   }, [runId, fetchData, initialData]);
 
   useEffect(() => {
@@ -1273,18 +1289,28 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
     const agentTools = agentSpans.filter(s => s.span_type === "TOOL_CALL");
     const agentLLMs = agentSpans.filter(s => s.span_type?.includes("LLM"));
     const agentErrs = agentSpans.filter(s => s.status === "ERROR");
+    // Nested agents: span_ids contains every descendant root (and this agent's own root — exclude it)
+    const childAgents = subAgents.filter(a => a.root_span_id !== agent.root_span_id && agentSpanSet.has(a.root_span_id));
+    const effectiveAgentTab = agentTab === "sessions" && childAgents.length === 0 ? "chat" : agentTab;
+
+    const agentLabel = (a: SubAgent) => (a.subagent_name ? `${a.name}: ${a.subagent_name}` : a.name);
+    const runLabel = run.event_name ?? run.name ?? run.id.slice(0, 12);
+    const chainAgents = focusStack
+      .slice(0, -1)
+      .map(id => subAgents.find(a => a.root_span_id === id))
+      .filter((a): a is SubAgent => !!a);
 
     const tabStyle = (k: string) => ({
       padding: "8px 12px", fontSize: "12px", fontWeight: 500, cursor: "pointer" as const,
       background: "none", border: "none",
-      color: agentTab === k ? C.fg5 : C.fg0,
-      borderBottom: agentTab === k ? `2px solid ${C.fg4}` : "2px solid transparent",
+      color: effectiveAgentTab === k ? C.fg5 : C.fg0,
+      borderBottom: effectiveAgentTab === k ? `2px solid ${C.fg4}` : "2px solid transparent",
     });
 
     return (
       <div className="h-full flex flex-col">
         <ViewHeader
-          title={agent.name}
+          title={agentLabel(agent)}
           model={agent.model}
           active={isActive(run)}
           startedAt={agent.start_time_ms}
@@ -1295,22 +1321,34 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
           }}
           allSpans={agentSpans}
           breadcrumb={{
-            onBack: () => setFocusedAgent(null),
-            parentName: run.event_name ?? run.name ?? run.id.slice(0, 12),
+            onBack: () => setFocusStack(s => s.slice(0, -1)),
+            parentName: runLabel,
+            ancestors: [
+              { name: runLabel, onSelect: () => setFocusStack([]) },
+              ...chainAgents.map((a) => ({
+                name: agentLabel(a),
+                onSelect: () => setFocusStack(s => s.slice(0, s.indexOf(a.root_span_id) + 1)),
+              })),
+            ],
           }}
         />
         <div className="flex-shrink-0 flex" style={{ borderBottom: `1px solid ${C.border}`, paddingLeft: 16 }}>
           <button style={tabStyle("chat")} onClick={() => setAgentTab("chat")}>Overview</button>
           <button style={tabStyle("tree")} onClick={() => setAgentTab("tree")}>Span Tree</button>
+          {childAgents.length > 0 && <button style={tabStyle("sessions")} onClick={() => setAgentTab("sessions")}>Session Tree</button>}
         </div>
-        {agentTab === "tree" ? (
+        {effectiveAgentTab === "tree" ? (
           <div className="flex-1 relative min-h-0 overflow-auto sb" style={{ padding: 16 }}>
-            <SpanTree spans={agentSpans} />
+            <SpanTree spans={agentSpans} onDiveIn={diveIntoAgent} />
+          </div>
+        ) : effectiveAgentTab === "sessions" ? (
+          <div className="flex-1 relative min-h-0 overflow-auto sb" style={{ padding: 16 }}>
+            <SessionTree subAgents={childAgents} spans={agentSpans} onDiveIn={diveIntoAgent} />
           </div>
         ) : (
           <StickToBottom className="flex-1 relative min-h-0" resize="smooth" initial={false} contextRef={stickToBottomContextRef}>
             <StickToBottom.Content className="sb">
-              {agentTab === "chat" && <ChatFlow spans={agentSpans} liveEvents={[]} subAgents={[]} onDiveIn={setFocusedAgent} />}
+              <ChatFlow spans={agentSpans} liveEvents={[]} subAgents={childAgents} onDiveIn={diveIntoAgent} viewMode={viewMode} />
             </StickToBottom.Content>
             <ScrollToBottomButton />
           </StickToBottom>
@@ -1386,16 +1424,17 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
             onDeleteAnnotation={annotationsApi.remove}
             viewMode={viewMode}
             onViewModeChange={setViewMode}
+            onDiveIn={diveIntoAgent}
           />
         </div>
       ) : activeTab === "sessions" ? (
         <div className="flex-1 relative min-h-0 overflow-auto sb" style={{ padding: 16 }}>
-          <SessionTree subAgents={subAgents} spans={spans} onDiveIn={setFocusedAgent} />
+          <SessionTree subAgents={subAgents} spans={spans} onDiveIn={diveIntoAgent} />
         </div>
       ) : (
         <StickToBottom className="flex-1 relative min-h-0" resize="smooth" initial={false} contextRef={stickToBottomContextRef}>
           <StickToBottom.Content className="sb">
-            {activeTab === "chat" && <ChatFlow spans={spans} liveEvents={liveEvents} subAgents={subAgents} onDiveIn={setFocusedAgent} isActive={active} lastUpdatedAt={run.last_updated_at} onEditMessage={onForkStarted && !active ? (msg) => setEditModal({ userMessage: msg }) : undefined} replayError={replayMeta?.replay?.error ?? null} viewMode={viewMode} />}
+            {activeTab === "chat" && <ChatFlow spans={spans} liveEvents={liveEvents} subAgents={subAgents} onDiveIn={diveIntoAgent} isActive={active} lastUpdatedAt={run.last_updated_at} onEditMessage={onForkStarted && !active ? (msg) => setEditModal({ userMessage: msg }) : undefined} replayError={replayMeta?.replay?.error ?? null} viewMode={viewMode} />}
             {activeTab === "convo" && run.convo_id && (
               source === "cloud"
                 ? <RemoteConvoLoader convoId={run.convo_id} highlightEventId={runId} />

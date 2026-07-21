@@ -30,11 +30,18 @@
 
 **Todos:**
 - [x] Plan F-003 (this entry)
-- [ ] Patch opencode-workshop-plugin: capture `task` tool description into span metadata (in plugin-side — outside this workshop repo)
+- [ ] Patch opencode-workshop-plugin: capture `task` tool description into span metadata (plugin-side — outside this workshop repo)
 - [ ] In `src/agents.ts`: detect sub-agents by tool name `task` (not just by tree pattern) for better naming
-- [ ] In `SpanTree.tsx`: render sub-agent spans with their name as the label, not just "tool: task"
-- [ ] Add "Sub-agents" section to RunDetail sidebar
-- [ ] Test: run an OpenCode session that uses task tool, verify span tree shows named sub-agents
+- [x] In `SpanTree.tsx`: render sub-agent spans with their name as the label, not just "tool: task" — gold `SUB_AGENT_ROOT` badge + "Sub-agent: {subagent_name ?? task N}" label (name fills in once the plugin-side metadata lands)
+- [ ] Add "Sub-agents" section to RunDetail sidebar — scoped OUT by base proposal (no sidebar component exists)
+- [ ] Test: run an OpenCode session that uses task tool, verify span tree shows named sub-agents (needs daemon + plugin session)
+
+**Extension — drill-down + timeline (openspec change `extend-subagent-drilldown-f003`):**
+- [x] Multi-level drill-down in `RunDetail.tsx`: `focusStack` + breadcrumb chain (Run › A › B), back pops one level, ancestor click truncates
+- [x] Nested sub-agents visible inside the focused agent view (`childAgents` → ChatFlow blocks + scoped "Session Tree" tab)
+- [x] `SpanTree.tsx`: in-tree `SubAgentBlock` "Open Sub-Agent →" dive-in via optional `onDiveIn` prop
+- [x] `FlameTimeline.tsx`: gold bars + gold row labels for sub-agent roots, translucent gold time band per sub-agent, click root bar → dive
+- [x] `ChatFlow.tsx`: forward `subAgents` + `onDiveIn` to `FlameTimeline`
 
 ---
 
