@@ -30,9 +30,9 @@
 
 **Todos:**
 - [x] Plan F-003 (this entry)
-- [ ] Patch opencode-workshop-plugin: capture `task` tool description into span metadata (plugin-side — outside this workshop repo)
-- [ ] In `src/agents.ts`: detect sub-agents by tool name `task` (not just by tree pattern) for better naming
-- [x] In `SpanTree.tsx`: render sub-agent spans with their name as the label, not just "tool: task" — gold `SUB_AGENT_ROOT` badge + "Sub-agent: {subagent_name ?? task N}" label (name fills in once the plugin-side metadata lands)
+- [x] Patch opencode-workshop-plugin: attach `subagent_name` attribute to the `task` tool span (description or prompt prefix) — shipped in v0.1.0-kolya.7 (ESM + CJS dist/, mirrored branch in tool.execute.before)
+- [x] In `src/agents.ts`: detect sub-agents by tool name `task` (Pattern 3) — bare root span even before LLM child is born; also read `subagent_name` from the tool span's own attributes (plugin can attach it there); prefer `subagent_name` over span.name for `SubAgent.name`
+- [x] SpanTree/SubAgentBlock now display the human label (was already in place; just unblocked by plugin metadata + Pattern 3)
 - [ ] Add "Sub-agents" section to RunDetail sidebar — scoped OUT by base proposal (no sidebar component exists)
 - [ ] Test: run an OpenCode session that uses task tool, verify span tree shows named sub-agents (needs daemon + plugin session)
 

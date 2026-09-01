@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-All five F-001..F-005 base features are **closed or shipped**. The latest commit is the **F-003 extension** (sub-agent drill-down + timeline bands). The only Active Features are F-002 (Codex/Claude → OpenCode migration, **planning only — no code yet**) and F-003 (base + extension shipped; plugin-side metadata + sidebar scoped-out deferred). Repo is on `main`, clean, in sync with `origin/main`.
+F-003 is now **functionally closed** on both sides of the contract: the workshop fork has Pattern-3 detection + subagent_name precedence in `src/agents.ts` (with a 9-test unit suite in `tests/agents.test.ts`), and the plugin fork attaches `subagent_name` to the `task` tool span in `tool.execute.before` (v0.1.0-kolya.7). Only F-002 remains as a planning-only Active Feature; everything else is closed. The repo is on `main`, working tree clean apart from the F-003 changes staged for the next commit.
 
 - **HEAD:** `1788319` on `main` (in sync with `origin/main`)
 - **Last 5 commits** (newest first):
@@ -20,11 +20,19 @@ All five F-001..F-005 base features are **closed or shipped**. The latest commit
 
 ### F-003 — Sub-agent visualization (`openspec/changes/add-subagent-visualization-f003/` + `openspec/changes/extend-subagent-drilldown-f003/`)
 
-**Status:** Base + extension SHIPPED. F-003 remains in Active Features because some non-code todos are deferred (plugin-side patch in other repo, sidebar scoped out, real-session smoke pending).
+**Status:** Base + extension + plugin-side metadata + Pattern-3 detection **all shipped**. F-003 is functionally complete; only the sidebar add (scoped out by base proposal) and a real-session smoke test are deferred.
 
 **Base** (commit `7f14f7e`): `detectSubAgents` consolidated to `src/agents.ts`; `SubAgent.subagent_name?` added; SpanTree gold `SUB_AGENT_ROOT` badge + friendly labels; in-tree `SubAgentBlock` section; FlameTimeline tooltip gold badge.
 
 **Extension** (commit `1788319`, 12 files +489/-35): Multi-level drill-down in `RunDetail.tsx` via `focusStack` + breadcrumb chain (Run › A › B); nested sub-agents visible inside the focused agent view (`childAgents` → ChatFlow blocks + scoped "Session Tree" tab); `SpanTree.tsx` in-tree `SubAgentBlock` dive-in via optional `onDiveIn` prop; `FlameTimeline.tsx` gold bars + gold row labels for sub-agent roots + translucent gold time bands + click root bar → dive; `ChatFlow.tsx` forwards `subAgents` + `onDiveIn` to `FlameTimeline`.
+
+**Closing patch (2026-07-22, uncommitted at handoff time)**:
+- `src/agents.ts`: added Pattern 3 (bare `task` tool is recognised as a sub-agent root even before the LLM child is born). Also reads `subagent_name` from the tool span's own attributes (plugin attaches it there in `tool.execute.before`) and prefers `subagent_name` over `span.name` for `SubAgent.name`.
+- `scripts/seed-traces.ts`: renamed `raindrop.subagent.name` → `subagent_name` to match the contract (was a latent bug — workshop UI never saw the label because the attribute key was wrong).
+- `tests/agents.test.ts`: new file, 9 tests pinning Pattern 1/2/3 + attribute contract + precedence + JSON tolerance.
+- `ai-docs/PLAN.md`: F-003 todos updated (sidebar item + real-session smoke remain as deferred).
+
+**Companion plugin** (separate repo `~/workspase/projects/opencode-workshop-plugin`, v0.1.0-kolya.7): added `extractTaskLabel(args)` helper + conditional `attrString("subagent_name", taskLabel)` in the `task` branch of `tool.execute.before` for both `dist/index.js` and `dist/index.cjs`. Syntax-check passes (`node --check` both bundles). The label is derived from `args.description` (preferred, up to 120 chars) or `args.prompt` (first 60 chars).
 
 **Fixture repair finding (important for future testing):** the base F-003 e2e test (`workshop-actions.spec.ts` L213) was RED before the extension work — `scripts/seed-traces.ts` fixture 3's `subagent.review` span lacked `ai.toolCall.name`, so `inferSpanType` typed it INTERNAL and `detectSubAgents` never fired. Repaired by adding `ai.toolCall.name` to the root + reparenting `read_file` under the LLM child + adding a new nested `subagent.lint` sub-agent. Base F-003 e2e now green; new drill-down + timeline e2e tests added (2 tests).
 

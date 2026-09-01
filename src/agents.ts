@@ -1,11 +1,21 @@
 /**
  * Sub-agent detection from span trees.
  *
- * A sub-agent is detected when a TOOL_CALL span contains an LLM_GENERATION child
- * that itself contains TOOL_CALL children. This means the tool is running its own
- * agentic loop (LLM + tools), not just making a single LLM call.
+ * A sub-agent is detected by one of three patterns:
+ *   Pattern 1 (classic agentic loop): TOOL_CALL > LLM_GENERATION > TOOL_CALL
+ *   Pattern 2 (named agent span):    any child LLM span named "agent.subagent"
+ *   Pattern 3 (OpenCode task tool):  TOOL_CALL with name "task" — OpenCode's
+ *                                    built-in delegation tool. The plugin
+ *                                    attaches the user-supplied description as
+ *                                    `subagent_name` to the LLM child span, so
+ *                                    detection still uses Pattern 1 (tool > LLM)
+ *                                    when children are present; Pattern 3
+ *                                    catches the degenerate case where the
+ *                                    child session is still spinning up at
+ *                                    snapshot time and no LLM child exists yet.
  *
- * Pattern: TOOL_CALL > LLM_GENERATION > TOOL_CALL
+ * Display name precedence: explicit `subagent_name` attribute (plugin F-003
+ * contract) > span.name > "task N" (auto-numbered).
  */
 
 interface SpanRow {
@@ -68,6 +78,13 @@ export function detectSubAgents(spans: SpanRow[]): SubAgent[] {
     // Detect sub-agent patterns:
     // 1. Classic agentic loop: TOOL > LLM > TOOL (tool contains LLM that uses tools)
     // 2. Named sub-agent: TOOL > agent.subagent (Claude Agent SDK pattern — may not have tool children)
+    // 3. OpenCode `task` tool OR any tool that carries `subagent_name` attribute:
+    //    the plugin attaches `subagent_name` to every delegated sub-agent tool
+    //    span in `tool.execute.before`, regardless of the tool's canonical name
+    //    (the OpenCode built-in is `task`; Claude Agent SDK uses `subagent.*`;
+    //    custom plugins may use other names). Catching all of them keeps the
+    //    UI consistent even when a leaf sub-agent has no further children.
+    const isTaskTool = span.name === "task";
     const kids = children.get(span.id) ?? [];
     const llmKids = kids.filter(k => k.span_type?.includes("LLM"));
     let hasAgenticLoop = false;
@@ -82,7 +99,7 @@ export function detectSubAgents(spans: SpanRow[]): SubAgent[] {
       if (llm.name === "agent.subagent") {
         hasAgenticLoop = true;
       }
-      // Read subagent_name from the LLM child's attributes (plugin F-010 contract).
+      // Read subagent_name from the LLM child's attributes (plugin F-003 contract).
       if (!subagentName && llm.attributes) {
         try {
           const attrs = JSON.parse(llm.attributes) as Record<string, unknown>;
@@ -93,7 +110,27 @@ export function detectSubAgents(spans: SpanRow[]): SubAgent[] {
       if (hasAgenticLoop && subagentName) break;
     }
 
-    if (!hasAgenticLoop) continue;
+    // Also read subagent_name directly from the TOOL_CALL span's own attributes
+    // (the plugin attaches it there in tool.execute.before before the LLM child
+    // is born, so the bare `task` span can carry the human label too).
+    let spanHasSubagentAttr = false;
+    if (span.attributes) {
+      try {
+        const attrs = JSON.parse(span.attributes) as Record<string, unknown>;
+        const v = attrs["subagent_name"];
+        if (typeof v === "string" && v.length > 0) {
+          if (!subagentName) subagentName = v;
+          spanHasSubagentAttr = true;
+        }
+      } catch {}
+    }
+
+    // Pattern 3 fires when EITHER the tool is the canonical `task` OR the
+    // plugin has labelled this tool span as a sub-agent (any tool name, even
+    // when no LLM grandchild exists yet — leaf sub-agents without further
+    // tool use still need to show up in the tree).
+    const isSubAgentByAttribute = spanHasSubagentAttr;
+    if (!hasAgenticLoop && !isTaskTool && !isSubAgentByAttribute) continue;
 
     // Collect all descendant span IDs — by parent-child AND time overlap
     const allSpanIds: string[] = [];
@@ -122,9 +159,11 @@ export function detectSubAgents(spans: SpanRow[]): SubAgent[] {
     }
     collect(span.id);
 
+    // Display name: plugin-supplied subagent_name > raw tool name.
+    // SpanTree.tsx already does the final "task N" fallback when neither is set.
     agents.push({
       root_span_id: span.id,
-      name: span.name,
+      name: subagentName ?? span.name,
       subagent_name: subagentName,
       span_ids: allSpanIds,
       start_time_ms: span.start_time_ms,
