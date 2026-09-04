@@ -13,6 +13,17 @@
 
 ---
 
+## Roadmap (Tier 1, next-up) — 2026-09-04
+
+These two are the highest-priority items after F-012 / F-013 / F-005 closed 2026-09-04. Detailed specs live in `ai-docs/specs/`:
+
+- **T1-A. FTS5 full-text search across spans** — currently only `event_name` is searchable, and the search misses messages, payloads, tool args. Spec: `specs/F-008-fts5-fulltext-search.md`. Backend + UI, ~3-5 days.
+- **T1-B. Bug: `loadConfig` cwd vs project root mismatch** — `eventName` from `raindrop.json` placed in workdir doesn't get picked up because `loadConfig()` looks at `<input.directory>/.opencode/raindrop.json`, not cwd. Affects multi-project isolation. Spec: `specs/F-011-loadconfig-cwd-bug.md`. Small fix, 1-2 hours.
+
+Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
+
+---
+
 ## Active Features
 
 ### F-012 — Collapsible Statistics panel + Convo Statistics + SpanDetail parent/children
