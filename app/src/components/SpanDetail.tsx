@@ -54,13 +54,21 @@ function CopyButton({ text }: { text: string }) {
 
 type SpanDetailTab = "messages" | "metadata";
 
-export function SpanDetail({ span }: { span: Span }) {
+export function SpanDetail({ span, allSpans }: { span: Span; allSpans?: Span[] }) {
   const info = typeInfo(span);
   const isErr = span.status === "ERROR";
   const isLLM = info === TYPE_LABEL.LLM_GENERATION;
   const messages = isLLM ? messagesFromSpan(span) : null;
   const hasMessages = !!messages && messages.length > 0;
   const [tab, setTab] = useState<SpanDetailTab>(isLLM ? "messages" : "metadata");
+
+  // F-012: resolve parent and children from the full spans list when provided.
+  const parentSpan = allSpans && span.parent_span_id
+    ? allSpans.find(s => s.id === span.parent_span_id)
+    : null;
+  const children = allSpans
+    ? allSpans.filter(s => s.parent_span_id === span.id)
+    : [];
 
   useEffect(() => {
     setTab(isLLM ? "messages" : "metadata");
@@ -125,6 +133,17 @@ export function SpanDetail({ span }: { span: Span }) {
             <div style={{ color: C.fg2 }}>{span.end_time_ms ? new Date(span.end_time_ms).toISOString().replace("T", " ").slice(0, 23) : "—"}</div>
             <div style={{ color: C.fg0 }}>span id</div>
             <div style={{ color: C.fg0 }}>{span.id.slice(-12)}</div>
+            {parentSpan && (
+              <><div style={{ color: C.fg0 }}>parent</div>
+              <div style={{ color: C.fg2 }} className="truncate" title={parentSpan.name}>
+                <span className="font-mono">{parentSpan.name}</span>
+                <span style={{ color: C.fg0, opacity: 0.6 }}> · {parentSpan.id.slice(-12)}</span>
+              </div></>
+            )}
+            {children.length > 0 && (
+              <><div style={{ color: C.fg0 }}>children</div>
+              <div style={{ color: C.fg2 }} className="font-mono">{children.length}</div></>
+            )}
             {span.attributes && (() => { try { const a = JSON.parse(span.attributes); return a["ai.provider.baseURL"] ? <><div style={{ color: C.fg0 }}>base url</div><div style={{ color: C.fg0 }}>{a["ai.provider.baseURL"]}</div></> : null; } catch { return null; } })()}
           </div>
 
@@ -205,6 +224,28 @@ export function SpanDetail({ span }: { span: Span }) {
               </div>
               <div className="p-2 rounded" style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${C.border}` }}>
                 <JsonView data={span.output_payload} />
+              </div>
+            </div>
+          )}
+
+          {/* F-012: list child spans so users can navigate the tree from any node */}
+          {children.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide font-medium mb-1" style={{ color: C.fg1 }}>Children ({children.length})</div>
+              <div className="rounded p-2 space-y-0.5" style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${C.border}` }}>
+                {children
+                  .slice()
+                  .sort((a, b) => (a.start_time_ms ?? 0) - (b.start_time_ms ?? 0))
+                  .map(c => {
+                    const ci = typeInfo(c);
+                    return (
+                      <div key={c.id} className="flex items-center gap-2 text-[11px] font-mono">
+                        <span style={{ color: ci.color }}>{ci.label}</span>
+                        <span className="truncate flex-1" style={{ color: C.fg2 }} title={c.name}>{c.name}</span>
+                        <span style={{ color: C.fg0, opacity: 0.7 }} className="whitespace-nowrap">{fmt(c.duration_ms)}</span>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}

@@ -618,6 +618,134 @@ export function getRunsByConvoId(convoId: string) {
     .all();
 }
 
+/**
+ * F-012: cross-run aggregation for a single conversation. Returns totals for
+ * duration, spans, LLM/tool/Subagent counts, token coverage, plus per-model
+ * totals (used to render the "Convo Statistics" panel in the UI).
+ *
+ * Single round-trip: one query against runs + spans + a per-model rollup via
+ * JSON1 attributes. Always returns a stats object even when there are no spans
+ * (so the UI can render a "0 runs" empty state instead of 404'ing).
+ */
+export function getConvoStatistics(convoId: string) {
+  const runs = getDrizzleDb()
+    .select({
+      id: schema.runs.id,
+      started_at: schema.runs.started_at,
+      last_updated_at: schema.runs.last_updated_at,
+      event_name: schema.runs.event_name,
+    })
+    .from(schema.runs)
+    .where(eq(schema.runs.convo_id, convoId))
+    .all();
+
+  if (runs.length === 0) {
+    return {
+      convo_id: convoId,
+      run_count: 0,
+      span_count: 0,
+      llm_span_count: 0,
+      tool_span_count: 0,
+      subagent_count: 0,
+      error_span_count: 0,
+      wall_clock_ms: 0,
+      span_with_tokens: 0,
+      tokens: { in: 0, out: 0 },
+      by_model: [] as Array<{ model: string; in: number; out: number }>,
+      runs: [] as Array<{ id: string; event_name: string | null; started_at: number; wall_clock_ms: number; tokens: { in: number; out: number } }>,
+    };
+  }
+
+  // Pull every span for these runs in one go; aggregate in JS. Acceptable for
+  // F-012 since convos are small (median ~1 run); we revisit with a rollup
+  // table if a convo crosses ~1k spans.
+  const runIds = runs.map(r => r.id);
+  const spanRows = getDrizzleDb()
+    .select({
+      id: schema.spans.id,
+      run_id: schema.spans.run_id,
+      name: schema.spans.name,
+      span_type: schema.spans.span_type,
+      status: schema.spans.status,
+      model: schema.spans.model,
+      input_tokens: schema.spans.input_tokens,
+      output_tokens: schema.spans.output_tokens,
+      start_time_ms: schema.spans.start_time_ms,
+      end_time_ms: schema.spans.end_time_ms,
+      duration_ms: schema.spans.duration_ms,
+      attributes: schema.spans.attributes,
+    })
+    .from(schema.spans)
+    .where(inArray(schema.spans.run_id, runIds))
+    .all();
+
+  let llmCount = 0, toolCount = 0, subagentCount = 0, errorCount = 0, withTokens = 0;
+  let inTok = 0, outTok = 0;
+  let minStart = Number.POSITIVE_INFINITY, maxEnd = 0;
+  const modelTotals = new Map<string, { in: number; out: number }>();
+
+  for (const s of spanRows) {
+    if (s.span_type?.includes("LLM")) llmCount++;
+    if (s.span_type === "TOOL_CALL") toolCount++;
+    if (s.name === "Subagent") subagentCount++;
+    if (s.status === "ERROR") errorCount++;
+    if (s.input_tokens != null || s.output_tokens != null) {
+      withTokens++;
+      inTok += s.input_tokens ?? 0;
+      outTok += s.output_tokens ?? 0;
+      if (s.model) {
+        const m = modelTotals.get(s.model) ?? { in: 0, out: 0 };
+        m.in += s.input_tokens ?? 0;
+        m.out += s.output_tokens ?? 0;
+        modelTotals.set(s.model, m);
+      }
+    }
+    if (s.start_time_ms && s.start_time_ms < minStart) minStart = s.start_time_ms;
+    if (s.end_time_ms && s.end_time_ms > maxEnd) maxEnd = s.end_time_ms;
+  }
+
+  // Per-run rollup so the UI can show "Run X used 3.2k tokens in 1m 23s"
+  const perRun = new Map<string, { tokens: { in: number; out: number }; minStart: number; maxEnd: number }>();
+  for (const s of spanRows) {
+    const r = perRun.get(s.run_id) ?? { tokens: { in: 0, out: 0 }, minStart: Number.POSITIVE_INFINITY, maxEnd: 0 };
+    if (s.input_tokens != null || s.output_tokens != null) {
+      r.tokens.in += s.input_tokens ?? 0;
+      r.tokens.out += s.output_tokens ?? 0;
+    }
+    if (s.start_time_ms && s.start_time_ms < r.minStart) r.minStart = s.start_time_ms;
+    if (s.end_time_ms && s.end_time_ms > r.maxEnd) r.maxEnd = s.end_time_ms;
+    perRun.set(s.run_id, r);
+  }
+
+  const runsOut = runs.map(r => {
+    const p = perRun.get(r.id);
+    return {
+      id: r.id,
+      event_name: r.event_name,
+      started_at: r.started_at,
+      wall_clock_ms: p ? Math.max(0, p.maxEnd - p.minStart) : 0,
+      tokens: p?.tokens ?? { in: 0, out: 0 },
+    };
+  });
+
+  return {
+    convo_id: convoId,
+    run_count: runs.length,
+    span_count: spanRows.length,
+    llm_span_count: llmCount,
+    tool_span_count: toolCount,
+    subagent_count: subagentCount,
+    error_span_count: errorCount,
+    wall_clock_ms: maxEnd > 0 ? Math.max(0, maxEnd - minStart) : 0,
+    span_with_tokens: withTokens,
+    tokens: { in: inTok, out: outTok },
+    by_model: [...modelTotals.entries()]
+      .map(([model, t]) => ({ model, in: t.in, out: t.out }))
+      .sort((a, b) => (b.in + b.out) - (a.in + a.out)),
+    runs: runsOut,
+  };
+}
+
 export function clearAll() {
   getDrizzleDb().transaction((tx) => {
     tx.delete(schema.live_events).run();

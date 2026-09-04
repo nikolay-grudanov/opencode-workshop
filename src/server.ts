@@ -8,7 +8,7 @@ import { randomUUID } from "crypto";
 import { normalizeOtelId } from "./ids";
 import { parseOtlpRequest } from "./parse";
 import { decodeOtlpProtobuf } from "./otlp-protobuf";
-import { upsertRun, insertSpan, upsertEventSpan, findRunByEventId, adoptRunByEventId, getRuns, getRunWithSpans, getRunsByConvoId, clearAll, upsertLiveEvent, getLiveEvents, cacheSavedRun, getCachedRun, deleteCachedRun, deleteRun, getSpanMeta, getSpanById, getSpanPayloadColumn, getSpanContext, getMostRecentlyTouchedRun, getRunById, getRunOutline, listSpansFiltered, searchRun, tailLiveEvents, listSavedEvents, getSavedEvent, upsertSavedEvent, patchSavedEvent, deleteSavedEvent, listSavedFolders, ensureSavedFolder, deleteSavedFolder, queryTraces, type SavedEventRow } from "./db";
+import { upsertRun, insertSpan, upsertEventSpan, findRunByEventId, adoptRunByEventId, getRuns, getRunWithSpans, getRunsByConvoId, getConvoStatistics, clearAll, upsertLiveEvent, getLiveEvents, cacheSavedRun, getCachedRun, deleteCachedRun, deleteRun, getSpanMeta, getSpanById, getSpanPayloadColumn, getSpanContext, getMostRecentlyTouchedRun, getRunById, getRunOutline, listSpansFiltered, searchRun, tailLiveEvents, listSavedEvents, getSavedEvent, upsertSavedEvent, patchSavedEvent, deleteSavedEvent, listSavedFolders, ensureSavedFolder, deleteSavedFolder, queryTraces, type SavedEventRow } from "./db";
 import { sliceSpanPayload } from "./payload-slice";
 import { detectSubAgents } from "./agents";
 import { applyProviderOptions, detectProvider, getProviderBaseURL, getProviderHeaders } from "./provider-options";
@@ -1041,6 +1041,8 @@ export async function createServer(port: number) {
     res.json(out);
   });
   app.get("/api/convo/:convoId", (req, res) => res.json(getRunsByConvoId(req.params.convoId)));
+  // F-012: cross-run convo statistics (totals + per-model + per-run rollup).
+  app.get("/api/convo/:convoId/statistics", (req, res) => res.json(getConvoStatistics(req.params.convoId)));
   // Regex route so run IDs containing ':', '/', or '.' aren't parsed as Express path-param separators
   app.get(/^\/api\/runs\/detail\/(.+)$/, (req, res) => {
     const id = (req.params as unknown as string[])[0];

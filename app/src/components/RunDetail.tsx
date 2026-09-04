@@ -222,6 +222,137 @@ function Badge({ label, copyValue }: { label: string; copyValue?: string }) {
   );
 }
 
+/**
+ * F-012: collapsible stats panel.
+ * When `expanded` is true, shows top-N spans (slow, tokens), top models with cost,
+ * and data-quality disclaimers (X/Y spans covered by tokens, N spans without end_time).
+ */
+function StatsPanel({ stats, spans, model }: {
+  stats: { spans: number; tools: number; llms: number; errors: number; dur: number; agents?: number; inTokens?: number; outTokens?: number };
+  spans?: Span[];
+  model?: string | null;
+}) {
+  if (!spans || spans.length === 0) {
+    return (
+      <div className="text-[11px] font-mono px-3 py-2 rounded" style={{ background: "rgba(255,255,255,0.02)", color: C.fg0 }}>
+        No spans available.
+      </div>
+    );
+  }
+
+  // Data-quality: count spans with each field populated.
+  const tokenSpans = spans.filter(s => s.input_tokens != null || s.output_tokens != null);
+  const endTimeSpans = spans.filter(s => s.end_time_ms);
+  const errorSpans = spans.filter(s => s.status === "ERROR");
+  const llmSpans = spans.filter(s => s.span_type?.includes("LLM"));
+  const toolSpans = spans.filter(s => s.span_type === "TOOL_CALL");
+
+  // Top-5 slowest spans (by duration_ms, ties broken by id).
+  const topSlow = [...spans]
+    .filter(s => s.duration_ms > 0)
+    .sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))
+    .slice(0, 5);
+
+  // Top-5 token-drains (LLM spans only, by in+out tokens).
+  const topTokens = [...llmSpans]
+    .filter(s => (s.input_tokens ?? 0) + (s.output_tokens ?? 0) > 0)
+    .sort((a, b) =>
+      ((b.input_tokens ?? 0) + (b.output_tokens ?? 0)) -
+      ((a.input_tokens ?? 0) + (a.output_tokens ?? 0))
+    )
+    .slice(0, 5);
+
+  // Top-5 costliest models (by total tokens × rate).
+  const byModel = getTokensByModel(spans);
+  const topModels = [...byModel.entries()]
+    .map(([m, { inTok, outTok }]) => ({
+      model: m, inTok, outTok,
+      cost: getCostBreakdown(m, inTok, outTok)?.totalCost ?? 0,
+    }))
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 5);
+
+  return (
+    <div
+      className="mt-2 rounded-lg p-3 space-y-3"
+      style={{ background: "rgba(255,255,255,0.025)", border: `1px solid ${C.border}` }}
+    >
+      {/* Data-quality disclaimers */}
+      <div>
+        <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Coverage</div>
+        <div className="text-[11px] space-y-0.5" style={{ color: C.fg0 }}>
+          <div>spans: <span className="font-mono" style={{ color: C.fg2 }}>{spans.length}</span>
+            {" "}(LLM <span className="font-mono">{llmSpans.length}</span>, tools <span className="font-mono">{toolSpans.length}</span>)
+          </div>
+          <div>token counts: <span className="font-mono" style={{ color: C.fg2 }}>{tokenSpans.length}/{spans.length}</span> spans
+            <span style={{ color: C.fg0, opacity: 0.7 }}> ({stats.inTokens != null ? "summed in StatsLine" : "not aggregated"})</span>
+          </div>
+          <div>end_time populated: <span className="font-mono" style={{ color: C.fg2 }}>{endTimeSpans.length}/{spans.length}</span> spans
+            <span style={{ color: C.fg0, opacity: 0.7 }}> (N/{spans.length} open means duration split is approximate)</span>
+          </div>
+          {errorSpans.length > 0 && (
+            <div style={{ color: C.red }}>ERROR spans: <span className="font-mono">{errorSpans.length}</span></div>
+          )}
+        </div>
+      </div>
+
+      {/* Top-5 slowest spans */}
+      {topSlow.length > 0 && (
+        <div>
+          <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Top slowest spans</div>
+          <table className="w-full text-[11px]">
+            <tbody>
+              {topSlow.map(s => (
+                <tr key={s.id}>
+                  <td className="font-mono truncate pr-2 max-w-[260px]" style={{ color: C.fg2 }} title={s.name}>{s.name}</td>
+                  <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg1 }}>{fmt(s.duration_ms)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Top-5 token-drains (LLM only) */}
+      {topTokens.length > 0 && (
+        <div>
+          <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Top token-drains (LLM)</div>
+          <table className="w-full text-[11px]">
+            <tbody>
+              {topTokens.map(s => (
+                <tr key={s.id}>
+                  <td className="font-mono truncate pr-2 max-w-[260px]" style={{ color: C.fg2 }} title={s.model ?? s.name}>{s.model ?? s.name}</td>
+                  <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg1 }}>
+                    {((s.input_tokens ?? 0) + (s.output_tokens ?? 0)).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Top-5 costliest models */}
+      {topModels.length > 0 && (
+        <div>
+          <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Top costliest models</div>
+          <table className="w-full text-[11px]">
+            <tbody>
+              {topModels.map(({ model: m, inTok, outTok, cost }) => (
+                <tr key={m}>
+                  <td className="font-mono truncate pr-2 max-w-[220px]" style={{ color: C.fg2 }} title={m}>{m}</td>
+                  <td className="font-mono text-right whitespace-nowrap pr-2" style={{ color: C.fg1 }}>{(inTok + outTok).toLocaleString()}</td>
+                  <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg2 }}>{cost > 0 ? fmtCost(cost) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatsLine({ stats, model, spans, active, startedAt }: {
   stats: { spans: number; tools: number; llms: number; errors: number; dur: number; agents?: number; inTokens?: number; outTokens?: number };
   model?: string | null;
@@ -231,6 +362,7 @@ function StatsLine({ stats, model, spans, active, startedAt }: {
 }) {
   const [showCost, setShowCost] = useState(false);
   const costRef = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
   const inTok = stats.inTokens ?? 0;
   const outTok = stats.outTokens ?? 0;
 
@@ -256,54 +388,75 @@ function StatsLine({ stats, model, spans, active, startedAt }: {
   const durRemSec = durSec % 60;
 
   return (
-    <div className="flex items-center gap-1.5 text-[11px] flex-wrap" style={{ color: C.fg1 }}>
-      {model && <><Badge label="model" copyValue={model} /><span>{model}</span><Dot /></>}
-      {stats.tools > 0 && <><span><NumberFlow value={stats.tools} /> tool{stats.tools !== 1 ? "s" : ""}</span><Dot /></>}
-      {(stats.agents ?? 0) > 0 && <><span><NumberFlow value={stats.agents!} /> sub-agent{stats.agents !== 1 ? "s" : ""}</span><Dot /></>}
-      {stats.errors > 0 && spans && <><ErrorsTooltip spans={spans} /><Dot /></>}
-      {stats.errors > 0 && !spans && <><span style={{ color: C.red }}><NumberFlow value={stats.errors} /> error{stats.errors !== 1 ? "s" : ""}</span><Dot /></>}
-      <Badge label="duration" /><span>{durMin > 0 ? <><NumberFlow value={durMin} />m <NumberFlow value={durRemSec} />s</> : <><NumberFlow value={durSec} />s</>}</span>
-      {(inTok > 0 || outTok > 0) && <><Dot /><Badge label="tokens" /><span><NumberFlow value={inTok} {...TOKEN_NUMBER_FLOW_TIMING} /> in / <NumberFlow value={outTok} {...TOKEN_NUMBER_FLOW_TIMING} /> out</span></>}
-      {(() => {
-        const totalCost = breakdown.reduce((sum, b) => sum + (b.breakdown?.totalCost ?? 0), 0);
-        const cost = totalCost > 0 ? fmtCost(totalCost) : null;
-        return cost && (
-        <>
-          <Dot />
-          <span ref={costRef} className="relative cursor-help"
-            onMouseEnter={() => setShowCost(true)} onMouseLeave={() => setShowCost(false)}>
-            {cost}
-            {showCost && breakdown.length > 0 && (
-              <div className="absolute left-0 top-full mt-1 z-50 rounded-lg p-2.5 shadow-xl whitespace-nowrap"
-                style={{ background: C.elevated, border: `1px solid ${C.borderLight}` }}>
-                <div className="text-[9px] uppercase tracking-wide mb-2 font-medium" style={{ color: C.fg0 }}>Cost Breakdown</div>
-                {breakdown.map(b => (
-                  <div key={b.model} className="mb-2 last:mb-0">
-                    <div className="text-[10px] font-medium mb-0.5" style={{ color: C.fg2 }}>{b.model}</div>
-                    {b.breakdown && (
-                      <div className="text-[9px] space-y-0.5" style={{ color: C.fg0 }}>
-                        <div className="flex justify-between gap-4">
-                          <span>{b.inTok.toLocaleString()} input @ ${b.breakdown.inRate}/M</span>
-                          <span style={{ color: C.fg1 }}>{fmtCost(b.breakdown.inCost)}</span>
+    <div>
+      <div className="flex items-center gap-1.5 text-[11px] flex-wrap" style={{ color: C.fg1 }}>
+        {model && <><Badge label="model" copyValue={model} /><span>{model}</span><Dot /></>}
+        {stats.tools > 0 && <><span><NumberFlow value={stats.tools} /> tool{stats.tools !== 1 ? "s" : ""}</span><Dot /></>}
+        {(stats.agents ?? 0) > 0 && <><span><NumberFlow value={stats.agents!} /> sub-agent{stats.agents !== 1 ? "s" : ""}</span><Dot /></>}
+        {stats.errors > 0 && spans && <><ErrorsTooltip spans={spans} /><Dot /></>}
+        {stats.errors > 0 && !spans && <><span style={{ color: C.red }}><NumberFlow value={stats.errors} /> error{stats.errors !== 1 ? "s" : ""}</span><Dot /></>}
+        <Badge label="duration" /><span>{durMin > 0 ? <><NumberFlow value={durMin} />m <NumberFlow value={durRemSec} />s</> : <><NumberFlow value={durSec} />s</>}</span>
+        {(inTok > 0 || outTok > 0) && <><Dot /><Badge label="tokens" /><span><NumberFlow value={inTok} {...TOKEN_NUMBER_FLOW_TIMING} /> in / <NumberFlow value={outTok} {...TOKEN_NUMBER_FLOW_TIMING} /> out</span></>}
+        {(() => {
+          const totalCost = breakdown.reduce((sum, b) => sum + (b.breakdown?.totalCost ?? 0), 0);
+          const cost = totalCost > 0 ? fmtCost(totalCost) : null;
+          return cost && (
+          <>
+            <Dot />
+            <span ref={costRef} className="relative cursor-help"
+              onMouseEnter={() => setShowCost(true)} onMouseLeave={() => setShowCost(false)}>
+              {cost}
+              {showCost && breakdown.length > 0 && (
+                <div className="absolute left-0 top-full mt-1 z-50 rounded-lg p-2.5 shadow-xl whitespace-nowrap"
+                  style={{ background: C.elevated, border: `1px solid ${C.borderLight}` }}>
+                  <div className="text-[9px] uppercase tracking-wide mb-2 font-medium" style={{ color: C.fg0 }}>Cost Breakdown</div>
+                  {breakdown.map(b => (
+                    <div key={b.model} className="mb-2 last:mb-0">
+                      <div className="text-[10px] font-medium mb-0.5" style={{ color: C.fg2 }}>{b.model}</div>
+                      {b.breakdown && (
+                        <div className="text-[9px] space-y-0.5" style={{ color: C.fg0 }}>
+                          <div className="flex justify-between gap-4">
+                            <span>{b.inTok.toLocaleString()} input @ ${b.breakdown.inRate}/M</span>
+                            <span style={{ color: C.fg1 }}>{fmtCost(b.breakdown.inCost)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span>{b.outTok.toLocaleString()} output @ ${b.breakdown.outRate}/M</span>
+                            <span style={{ color: C.fg1 }}>{fmtCost(b.breakdown.outCost)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 pt-0.5" style={{ borderTop: `1px solid ${C.border}` }}>
+                            <span style={{ color: C.fg1 }}>total</span>
+                            <span style={{ color: C.fg2 }}>{fmtCost(b.breakdown.totalCost)}</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between gap-4">
-                          <span>{b.outTok.toLocaleString()} output @ ${b.breakdown.outRate}/M</span>
-                          <span style={{ color: C.fg1 }}>{fmtCost(b.breakdown.outCost)}</span>
-                        </div>
-                        <div className="flex justify-between gap-4 pt-0.5" style={{ borderTop: `1px solid ${C.border}` }}>
-                          <span style={{ color: C.fg1 }}>total</span>
-                          <span style={{ color: C.fg2 }}>{fmtCost(b.breakdown.totalCost)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </span>
-        </>
-      );
-      })()}
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </span>
+          </>
+        );
+        })()}
+        {spans && (
+          <>
+            <Dot />
+            <button
+              type="button"
+              onClick={() => setExpanded(v => !v)}
+              className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 rounded transition-colors hover:bg-white/10"
+              style={{ color: expanded ? C.fg4 : C.fg1, background: expanded ? "rgba(255,255,255,0.06)" : "transparent" }}
+              title="Toggle detailed statistics panel"
+              aria-label="Toggle statistics panel"
+            >
+              stats {expanded ? "hide" : "show"}
+              <span style={{ display: "inline-flex", transform: expanded ? "rotate(180deg)" : "rotate(0)", transition: "transform 120ms", lineHeight: 0 }}>
+                <ChevronDown size={10} />
+              </span>
+            </button>
+          </>
+        )}
+      </div>
+      {spans && expanded && <StatsPanel stats={stats} spans={spans} model={model ?? null} />}
     </div>
   );
 }

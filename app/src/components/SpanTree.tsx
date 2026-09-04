@@ -518,7 +518,7 @@ export function SpanTree({
         {/* Right: detail */}
         {selectedSpan && (
           <div className="overflow-auto sb" style={{ flex: "0 0 50%", background: C.surface }}>
-            <SpanDetail span={selectedSpan} />
+            <SpanDetail span={selectedSpan} allSpans={spans} />
           </div>
         )}
       </div>
