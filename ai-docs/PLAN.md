@@ -15,6 +15,43 @@
 
 ## Active Features
 
+### F-012 — Collapsible Statistics panel + Convo Statistics + SpanDetail parent/children
+
+**Context:** Workshop UI previously showed a single StatsLine row (model/tools/sub-agents/errors/duration/tokens + Cost Breakdown hover). This worked for happy-path debugging but had three real blind spots surfaced in the metrics brainstorm:
+
+1. NO way to see WHICH spans burned the most time / tokens (top-N lookups).
+2. NO cross-run statistics for a conversation (just a flat list of runs).
+3. NO way to navigate the span tree from inside any single node.
+
+**Plan (F-012):** three additions, all incremental and non-breaking on existing endpoints.
+
+A) **Collapsible StatsPanel** (`app/src/components/RunDetail.tsx`): click "stats show" pill → reveals coverage disclaimer (X/Y spans with tokens, X/Y end_time populated, N errors), Top-5 slowest spans, Top-5 LLM token-drains, Top-5 costliest models. Existing collapsed row is unchanged.
+
+B) **Cross-run Convo Statistics** (`app/src/components/ConvoDetail.tsx` + `app/src/api/convo-statistics.ts` + `app/src/hooks/use-convo-statistics.ts` + `src/db.ts` `getConvoStatistics()` + `GET /api/convo/:convoId/statistics` endpoint): cross-run aggregation — total wall-clock, LLM/tool/sub-agent counts, errors, tokens (with coverage disclaimer), per-model rollup, per-run rollup. UI panel below the convo header, collapsible.
+
+C) **SpanDetail parent + children** (`app/src/components/SpanDetail.tsx` + `app/src/components/SpanTree.tsx`): when clicking any span, metadata grid shows `parent: <name> · <id-prefix>` and `children: <count>`. Bottom panel renders full children list sorted by `start_time_ms`.
+
+**Verified live (2026-09-01, run `63e0c53238518c8c9958e26f7aa033bc`):**
+- StatsPanel rendered with coverage disclaimers + Top-5 slow/token/cost tables
+- Convo Stats panel showed "1 run · 16 spans · 37 651 tokens" header + per-model "MiniMax-M3 37 651"
+- SpanDetail showed `parent minimax-coding-plan/MiniMax-M3 · bebc1d736...` and `children 4` for a selected tool span
+
+**Verification:** `bun x tsc --noEmit` 0 errors, `bun run lint` 0 errors / 3 pre-existing warnings not in my files, `bun run build:ui` success (1.8 MB index bundle).
+
+**Commit:** `f0cadd3`. Companion plugin commit `5d2907b` (F-013) is a hard prerequisite — without it, StatsPanel's coverage disclaimer would still say "end_time populated: 8/16" instead of "16/16".
+
+**Todos:**
+- [x] Plan F-012 (this entry)
+- [x] Add `StatsPanel` component + "stats show/hide" toggle in `RunDetail.tsx`
+- [x] Add `getConvoStatistics` in `src/db.ts` + endpoint in `src/server.ts`
+- [x] Add `app/src/api/convo-statistics.ts` + `app/src/hooks/use-convo-statistics.ts`
+- [x] Add `ConvoStatsPanel` in `app/src/components/ConvoDetail.tsx`
+- [x] Extend `SpanDetail` to take `allSpans` prop and show parent/children rows + children list
+- [x] Pass `allSpans={spans}` from `SpanTree.tsx` to `SpanDetail`
+- [x] `bun x tsc --noEmit` + `bun run lint` + `bun run build:ui`
+- [x] Live UI screenshot (StatsPanel + Convo Stats + SpanDetail parent/children) — all three render correctly in headless Chromium
+- [x] Commit F-012 (`f0cadd3`)
+
 ### F-003 — Sub-agent visualization for OpenCode `task` tool
 
 **Context:** Workshop already has `src/agents.ts` that **detects** sub-agents via the generic pattern `TOOL_CALL > LLM_GENERATION > TOOL_CALL`, but:
@@ -65,6 +102,8 @@
 - ✅ `examples/ai-sdk-chat/` — generic AI SDK example, not Codex-specific
 
 **Verification:** after removal, `bun run dev` must still build + serve, OpenCode traces must still stream (this is the regression bar).
+
+**Status 2026-09-01:** Scope is well-defined but no commits yet. Deferred in favour of F-001..F-005 + F-010/F-012/F-013 which deliver user-visible value faster. Will revisit when Kolya signals (currently 0 priority). Safe to leave as-is — files in scope are inert without code paths referencing them after F-001 (Cloud removal) commit `3122268`.
 
 **Todos:**
 - [x] Plan F-002 scope (this entry, with explicit "kept" list)
