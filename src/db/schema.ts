@@ -46,6 +46,17 @@ export const spans = sqliteTable(
   ],
 );
 
+// FTS5 virtual table created by drizzle/0002_fts5_spans.sql.
+export const spans_fts = sqliteTable("spans_fts", {
+  span_id: text("span_id").notNull(),
+  run_id: text("run_id").notNull(),
+  convo_id: text("convo_id"),
+  span_name: text("span_name"),
+  span_type: text("span_type"),
+  model: text("model"),
+  content_text: text("content_text"),
+});
+
 export const live_events = sqliteTable(
   "live_events",
   {

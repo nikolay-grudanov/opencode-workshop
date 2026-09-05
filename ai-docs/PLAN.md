@@ -26,6 +26,29 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 ## Active Features
 
+### F-008 — SQLite FTS5 full-text search across spans
+
+**Status:** P1 storage layer implemented locally; P2 search API next.
+
+**P1 completed:**
+- Added FTS5 `spans_fts` migration and typed schema declaration.
+- Added `buildSpanContentText()` with JSON/message flattening, malformed-JSON tolerance, and 8 KB cap.
+- Updated `insertSpan()` to write the FTS row in the same transaction as the span.
+- Updated `deleteRun()` to remove associated FTS rows.
+- Added 5 content-extraction tests.
+
+**P1 verification:** `bun x tsc --noEmit`, `bun run lint` (0 errors; 3 pre-existing warnings), `bun test tests/` (50 pass), and isolated DB insert verified an FTS row with payload text.
+
+**Todos:**
+- [x] F-008-P1 storage layer
+- [ ] F-008-P2 search API
+- [ ] F-008-P3 backfill + UI
+- [ ] F-008-P4 optional polish
+
+---
+
+## Active Features
+
 ### F-012 — Collapsible Statistics panel + Convo Statistics + SpanDetail parent/children
 
 **Context:** Workshop UI previously showed a single StatsLine row (model/tools/sub-agents/errors/duration/tokens + Cost Breakdown hover). This worked for happy-path debugging but had three real blind spots surfaced in the metrics brainstorm:

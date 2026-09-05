@@ -12,6 +12,7 @@ import type { NormalizedSpan } from "./spans/normalized";
 import * as schema from "./db/schema";
 import { embeddedMigrationFiles, embeddedMigrationJournal } from "./db/migration-assets";
 import { VERSION } from "./version";
+import { buildSpanContentText } from "./fts";
 
 const WORKSHOP_DB_PATH_ENV_VAR = "RAINDROP_WORKSHOP_DB_PATH";
 
@@ -338,6 +339,7 @@ export function countReplaysBySource(sourceRunId: string): number {
 
 export function deleteRun(runId: string) {
   getDrizzleDb().transaction((tx) => {
+    tx.run(drizzleSql`DELETE FROM spans_fts WHERE run_id = ${runId}`);
     tx.delete(schema.spans).where(eq(schema.spans.run_id, runId)).run();
     tx.delete(schema.live_events).where(eq(schema.live_events.trace_id, runId)).run();
     tx.delete(schema.runs).where(eq(schema.runs.id, runId)).run();
@@ -363,11 +365,12 @@ export function insertSpan(span: { id: string; run_id: string; parent_span_id?: 
     output_tokens: span.output_tokens ?? null,
     attributes: span.attributes ?? null,
   };
-  getDrizzleDb()
-    .insert(schema.spans)
-    .values(row)
-    .onConflictDoUpdate({ target: schema.spans.id, set: row })
-    .run();
+  getDrizzleDb().transaction((tx) => {
+    tx.insert(schema.spans).values(row).onConflictDoUpdate({ target: schema.spans.id, set: row }).run();
+    const run = tx.select({ convo_id: schema.runs.convo_id }).from(schema.runs).where(eq(schema.runs.id, span.run_id)).limit(1).get();
+    tx.run(drizzleSql`INSERT OR REPLACE INTO spans_fts (span_id, run_id, convo_id, span_name, span_type, model, content_text)
+      VALUES (${span.id}, ${span.run_id}, ${run?.convo_id ?? null}, ${span.name}, ${span.span_type ?? ""}, ${span.model ?? ""}, ${buildSpanContentText(span)})`);
+  });
 }
 
 export function upsertEventSpan(span: { id: string; run_id: string; name: string; span_type?: string; status?: string; input_payload?: string; output_payload?: string; start_time_ms: number; end_time_ms: number; duration_ms: number; model?: string; attributes?: string }) {
