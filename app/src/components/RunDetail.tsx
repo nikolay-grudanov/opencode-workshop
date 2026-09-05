@@ -1194,7 +1194,8 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
   const dataRef = useRef(data);
   const navigate = useNavigate();
   const { spanId: routeSpanId } = useParams<{ spanId?: string }>();
-  const { pathname } = useLocation();
+  const { pathname, search: locationSearch } = useLocation();
+  const focusSpanId = new URLSearchParams(locationSearch).get("focus_span");
   const usesRouteState = routeBase !== undefined;
   const runView = usesRouteState ? runViewFromPathname(pathname) : "overview";
   const tab: "chat" | "tree" | "convo" =
@@ -1323,6 +1324,11 @@ export function RunDetail({ runId, routeBase, initialData, isReplay, source, onF
     setData(null);
     setLiveEvents([]); setFocusStack([]); setAgentTab("chat"); setLocalTab("chat"); setLocalSelectedSpanId(null); setEditModal(null); fetchData();
   }, [runId, fetchData, initialData]);
+
+  useEffect(() => {
+    if (!focusSpanId || !data?.spans.some((s) => s.id === focusSpanId)) return;
+    if (routeBase) navigate(traceSpanPath(routeBase, runId, focusSpanId), { replace: true });
+  }, [data?.spans, focusSpanId, navigate, routeBase, runId]);
 
   useEffect(() => {
     if (!routeBase || !selectedSpanId || !data?.spans.length) return;

@@ -9,6 +9,7 @@ import { useReplay } from "../hooks/use-replay";
 import { RotateCcw, ArrowRight, X, ChevronDown } from "lucide-react";
 import { C } from "../utils/colors";
 import { fetchPrices } from "../utils/costs";
+import { searchWorkshopSpans, type WorkshopSearchResult } from "../api/query-api";
 import { parseReplayMetadata } from "../utils/types";
 import type { Run } from "../utils/types";
 import { useWorkshopConnected, useWorkshopMessage } from "../hooks/use-workshop-ws";
@@ -51,6 +52,9 @@ export function RunsPage() {
   const [replayCompare, setReplayCompare] = useState(false);
   const replay = useReplay();
   const [search, setSearch] = useState("");
+  const [fullTextResults, setFullTextResults] = useState<import("../api/query-api").WorkshopSearchResult[]>([]);
+  const [fullTextLoading, setFullTextLoading] = useState(false);
+  const [fullTextTotal, setFullTextTotal] = useState(0);
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const wsConnected = useWorkshopConnected();
   const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null);
@@ -78,6 +82,21 @@ export function RunsPage() {
   }, []);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) { setFullTextResults([]); setFullTextTotal(0); return; }
+    let cancelled = false;
+    setFullTextLoading(true);
+    const timer = window.setTimeout(() => {
+      searchWorkshopSpans({ query: q, limit: 50 })
+        .then((response) => { if (!cancelled) { setFullTextResults(response.results); setFullTextTotal(response.total); } })
+        .catch(() => { if (!cancelled) { setFullTextResults([]); setFullTextTotal(0); } })
+        .finally(() => { if (!cancelled) setFullTextLoading(false); });
+    }, 200);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [search]);
+
   useWorkshopMessage(fetchRuns);
 
   const hasUserTraces = useMemo(
@@ -280,6 +299,19 @@ export function RunsPage() {
         </div>
 
         <div ref={listRef} className="flex-1 overflow-auto p-2 space-y-0.5 sb">
+          {search.trim() && (fullTextLoading || fullTextResults.length > 0 || fullTextTotal === 0) && (
+            <div className="mb-3 rounded border border-white/10 bg-white/[0.03] p-2">
+              <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wide" style={{ color: C.fg1 }}>
+                {fullTextLoading ? "Searching spans…" : `Matches (${fullTextTotal})`}
+              </div>
+              {!fullTextLoading && fullTextResults.map((match: WorkshopSearchResult) => (
+                <button key={`${match.run_id}:${match.span_id}`} className="mb-1 block w-full rounded px-1.5 py-1 text-left hover:bg-white/10" onClick={() => navigate(`${runPath(match.run_id)}?focus_span=${encodeURIComponent(match.span_id)}`)}>
+                  <div className="truncate text-[10px] font-mono" style={{ color: C.fg2 }}>{match.span_name} · {match.run_id.slice(0, 8)}</div>
+                  <div className="text-[10px] leading-snug" style={{ color: C.fg1 }} dangerouslySetInnerHTML={{ __html: match.snippet }} />
+                </button>
+              ))}
+            </div>
+          )}
           {filtered.length === 0
               ? <div className="text-center text-xs mt-8" style={{ color: "#5a6a72" }}>
                   {search ? "No matching runs" : "No runs"}

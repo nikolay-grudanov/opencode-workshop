@@ -80,6 +80,7 @@ export function getDrizzleDb(): WorkshopDb {
   _drizzleDb = drizzle(_sqliteDb, { schema });
   try {
     migrate(_drizzleDb, { migrationsFolder: resolveMigrationsFolder() });
+    backfillFts();
   } catch (err) {
     closeDb();
     throw new Error(
@@ -371,6 +372,19 @@ export function insertSpan(span: { id: string; run_id: string; parent_span_id?: 
     tx.run(drizzleSql`INSERT OR REPLACE INTO spans_fts (span_id, run_id, convo_id, span_name, span_type, model, content_text)
       VALUES (${span.id}, ${span.run_id}, ${run?.convo_id ?? null}, ${span.name}, ${span.span_type ?? ""}, ${span.model ?? ""}, ${buildSpanContentText(span)})`);
   });
+}
+
+export function backfillFts(): number {
+  const db = getDrizzleDb().$client;
+  const existing = db.query("SELECT COUNT(*) AS count FROM spans_fts").get() as { count: number };
+  if (Number(existing?.count ?? 0) > 0) return 0;
+  const rows = db.query(`SELECT s.id, s.run_id, r.convo_id, s.name, s.span_type, s.model,
+    s.input_payload, s.output_payload, s.attributes FROM spans s JOIN runs r ON r.id = s.run_id`).all() as Array<Record<string, string | null>>;
+  const insert = db.prepare(`INSERT OR REPLACE INTO spans_fts (span_id, run_id, convo_id, span_name, span_type, model, content_text) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  db.transaction(() => {
+    for (const row of rows) insert.run(row.id, row.run_id, row.convo_id, row.name, row.span_type ?? "", row.model ?? "", buildSpanContentText({ input_payload: row.input_payload, output_payload: row.output_payload, attributes: row.attributes, name: row.name, span_type: row.span_type, model: row.model }));
+  })();
+  return rows.length;
 }
 
 export function searchSpans(query: string, limit = 50, offset = 0) {

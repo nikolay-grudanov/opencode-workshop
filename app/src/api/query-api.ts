@@ -56,6 +56,29 @@ export type Signal = z.infer<typeof signalSchema>;
 export type QueryEvent = z.infer<typeof queryEventSchema>;
 export type TraceSpan = z.infer<typeof traceSpanSchema>;
 export type SearchMode = "text" | "semantic" | "regex";
+export async function searchWorkshopSpans(opts: { query: string; limit?: number; offset?: number }): Promise<WorkshopSearchResponse> {
+  const params = new URLSearchParams({ q: opts.query, limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) });
+  const res = await fetch(`/api/search?${params}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Search failed (${res.status})`);
+  return await res.json() as WorkshopSearchResponse;
+}
+
+export interface WorkshopSearchResult {
+  span_id: string;
+  run_id: string;
+  span_name: string;
+  span_type: string | null;
+  model: string | null;
+  snippet: string;
+  bm25: number;
+}
+
+export interface WorkshopSearchResponse {
+  query: string;
+  total: number;
+  results: WorkshopSearchResult[];
+}
+
 
 async function queryApiFetch<T>(path: string, params: Record<string, string>, schema: z.ZodType<T>): Promise<T> {
   const proxyPath = path.replace(/^\/v1/, "/api/query");
