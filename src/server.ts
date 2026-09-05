@@ -8,7 +8,7 @@ import { randomUUID } from "crypto";
 import { normalizeOtelId } from "./ids";
 import { parseOtlpRequest } from "./parse";
 import { decodeOtlpProtobuf } from "./otlp-protobuf";
-import { upsertRun, insertSpan, upsertEventSpan, findRunByEventId, adoptRunByEventId, getRuns, getRunWithSpans, getRunsByConvoId, getConvoStatistics, clearAll, upsertLiveEvent, getLiveEvents, cacheSavedRun, getCachedRun, deleteCachedRun, deleteRun, getSpanMeta, getSpanById, getSpanPayloadColumn, getSpanContext, getMostRecentlyTouchedRun, getRunById, getRunOutline, listSpansFiltered, searchRun, tailLiveEvents, listSavedEvents, getSavedEvent, upsertSavedEvent, patchSavedEvent, deleteSavedEvent, listSavedFolders, ensureSavedFolder, deleteSavedFolder, queryTraces, type SavedEventRow } from "./db";
+import { upsertRun, insertSpan, upsertEventSpan, findRunByEventId, adoptRunByEventId, getRuns, getRunWithSpans, getRunsByConvoId, getConvoStatistics, clearAll, upsertLiveEvent, getLiveEvents, cacheSavedRun, getCachedRun, deleteCachedRun, deleteRun, getSpanMeta, getSpanById, getSpanPayloadColumn, getSpanContext, getMostRecentlyTouchedRun, getRunById, getRunOutline, listSpansFiltered, searchRun, searchSpans, tailLiveEvents, listSavedEvents, getSavedEvent, upsertSavedEvent, patchSavedEvent, deleteSavedEvent, listSavedFolders, ensureSavedFolder, deleteSavedFolder, queryTraces, type SavedEventRow } from "./db";
 import { sliceSpanPayload } from "./payload-slice";
 import { detectSubAgents } from "./agents";
 import { applyProviderOptions, detectProvider, getProviderBaseURL, getProviderHeaders } from "./provider-options";
@@ -875,6 +875,15 @@ export async function createServer(port: number) {
     const raw = Number(req.query.limit);
     const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), 5000) : 5000;
     res.json(getRuns(limit));
+  });
+  app.get("/api/search", (req, res) => {
+    const query = typeof req.query.q === "string" ? req.query.q : "";
+    if (!query.trim()) return res.status(400).json({ error: "q is required" });
+    try {
+      return res.json(searchSpans(query, Number(req.query.limit) || 50, Number(req.query.offset) || 0));
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : "invalid search query" });
+    }
   });
   app.get("/api/runs/active", (_req, res) => {
     const run = getMostRecentlyTouchedRun();

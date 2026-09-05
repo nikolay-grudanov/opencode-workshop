@@ -373,6 +373,21 @@ export function insertSpan(span: { id: string; run_id: string; parent_span_id?: 
   });
 }
 
+export function searchSpans(query: string, limit = 50, offset = 0) {
+  const match = query.trim();
+  if (!match) return { query: match, total: 0, results: [] };
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const db = getDrizzleDb().$client;
+  const total = db.query("SELECT COUNT(*) AS count FROM spans_fts WHERE spans_fts MATCH ?").get(match) as { count: number };
+  const results = db.query(`SELECT span_id, run_id, span_name, span_type, model,
+    snippet(spans_fts, 6, '<mark>', '</mark>', '…', 32) AS snippet,
+    bm25(spans_fts) AS bm25
+    FROM spans_fts WHERE spans_fts MATCH ? ORDER BY bm25(spans_fts), span_id LIMIT ? OFFSET ?`)
+    .all(match, safeLimit, safeOffset);
+  return { query: match, total: Number(total?.count ?? 0), results };
+}
+
 export function upsertEventSpan(span: { id: string; run_id: string; name: string; span_type?: string; status?: string; input_payload?: string; output_payload?: string; start_time_ms: number; end_time_ms: number; duration_ms: number; model?: string; attributes?: string }) {
   getDrizzleDb()
     .insert(schema.spans)
