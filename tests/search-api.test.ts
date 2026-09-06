@@ -13,7 +13,7 @@ describe("searchSpans", () => {
     const result = searchSpans("connection");
     expect(result.total).toBe(1);
     expect(result.results[0].span_id).toBe("search-span");
-    expect(String((result.results[0] as { snippet: unknown }).snippet).toLowerCase()).toContain("<mark>connection</mark>");
+    expect(String((result.results[0] as { snippet: unknown }).snippet).toLowerCase()).toContain("&lt;mark&gt;connection&lt;/mark&gt;");
   });
 
   test("supports pagination", () => {

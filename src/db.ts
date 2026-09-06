@@ -12,7 +12,7 @@ import type { NormalizedSpan } from "./spans/normalized";
 import * as schema from "./db/schema";
 import { embeddedMigrationFiles, embeddedMigrationJournal } from "./db/migration-assets";
 import { VERSION } from "./version";
-import { buildSpanContentText } from "./fts";
+import { buildSpanContentText, sanitizeFtsQuery, escapeSnippetHtml } from "./fts";
 
 const WORKSHOP_DB_PATH_ENV_VAR = "RAINDROP_WORKSHOP_DB_PATH";
 
@@ -388,8 +388,8 @@ export function backfillFts(): number {
 }
 
 export function searchSpans(query: string, limit = 50, offset = 0) {
-  const match = query.trim();
-  if (!match) return { query: match, total: 0, results: [] };
+  const match = sanitizeFtsQuery(query);
+  if (!match) return { query: query.trim(), total: 0, results: [] };
   const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
   const safeOffset = Math.max(0, Math.floor(offset));
   const db = getDrizzleDb().$client;
@@ -398,28 +398,37 @@ export function searchSpans(query: string, limit = 50, offset = 0) {
     snippet(spans_fts, 6, '<mark>', '</mark>', '…', 32) AS snippet,
     bm25(spans_fts) AS bm25
     FROM spans_fts WHERE spans_fts MATCH ? ORDER BY bm25(spans_fts), span_id LIMIT ? OFFSET ?`)
-    .all(match, safeLimit, safeOffset);
-  return { query: match, total: Number(total?.count ?? 0), results };
+    .all(match, safeLimit, safeOffset) as Array<Record<string, unknown>>;
+  const safeResults = results.map((row) => ({
+    span_id: String(row.span_id),
+    run_id: String(row.run_id),
+    span_name: String(row.span_name ?? ""),
+    span_type: row.span_type == null ? null : String(row.span_type),
+    model: row.model == null ? null : String(row.model),
+    snippet: escapeSnippetHtml(String(row.snippet ?? "")),
+    bm25: Number(row.bm25 ?? 0),
+  }));
+  return { query: query.trim(), total: Number(total?.count ?? 0), results: safeResults };
 }
 
 export function upsertEventSpan(span: { id: string; run_id: string; name: string; span_type?: string; status?: string; input_payload?: string; output_payload?: string; start_time_ms: number; end_time_ms: number; duration_ms: number; model?: string; attributes?: string }) {
-  getDrizzleDb()
-    .insert(schema.spans)
-    .values({
-      id: span.id,
-      run_id: span.run_id,
-      name: span.name,
-      span_type: span.span_type ?? null,
-      status: span.status ?? "UNSET",
-      input_payload: span.input_payload ?? null,
-      output_payload: span.output_payload ?? null,
-      start_time_ms: span.start_time_ms,
-      end_time_ms: span.end_time_ms,
-      duration_ms: span.duration_ms,
-      model: span.model ?? null,
-      attributes: span.attributes ?? null,
-    })
-    .onConflictDoUpdate({
+  const values = {
+    id: span.id,
+    run_id: span.run_id,
+    name: span.name,
+    span_type: span.span_type ?? null,
+    status: span.status ?? "UNSET",
+    input_payload: span.input_payload ?? null,
+    output_payload: span.output_payload ?? null,
+    start_time_ms: span.start_time_ms,
+    end_time_ms: span.end_time_ms,
+    duration_ms: span.duration_ms,
+    model: span.model ?? null,
+    attributes: span.attributes ?? null,
+  };
+  const db = getDrizzleDb();
+  db.transaction((tx) => {
+    tx.insert(schema.spans).values(values).onConflictDoUpdate({
       target: schema.spans.id,
       set: {
         name: drizzleSql`COALESCE(excluded.name, ${schema.spans.name})`,
@@ -433,8 +442,11 @@ export function upsertEventSpan(span: { id: string; run_id: string; name: string
         model: drizzleSql`COALESCE(excluded.model, ${schema.spans.model})`,
         attributes: drizzleSql`COALESCE(excluded.attributes, ${schema.spans.attributes})`,
       },
-    })
-    .run();
+    }).run();
+    const run = tx.select({ convo_id: schema.runs.convo_id }).from(schema.runs).where(eq(schema.runs.id, span.run_id)).limit(1).get();
+    tx.run(drizzleSql`INSERT OR REPLACE INTO spans_fts (span_id, run_id, convo_id, span_name, span_type, model, content_text)
+      VALUES (${span.id}, ${span.run_id}, ${run?.convo_id ?? null}, ${span.name}, ${span.span_type ?? ""}, ${span.model ?? ""}, ${buildSpanContentText(values)})`);
+  });
 }
 
 export function getRuns(limit = 200) {

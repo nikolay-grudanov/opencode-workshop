@@ -30,20 +30,20 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 **Status:** P1 storage layer implemented locally; P2 search API next.
 
-**P1 completed:**
-- Added FTS5 `spans_fts` migration and typed schema declaration.
-- Added `buildSpanContentText()` with JSON/message flattening, malformed-JSON tolerance, and 8 KB cap.
-- Updated `insertSpan()` to write the FTS row in the same transaction as the span.
-- Updated `deleteRun()` to remove associated FTS rows.
-- Added 5 content-extraction tests.
+**P1+P2+P3+P4 hotfix completed locally:**
+- FTS5 storage layer (`spans_fts` + `buildSpanContentText()`)
+- Search API (`/api/search`, BM25, snippets, pagination)
+- UI wiring (debounced sidebar results, focus_span deep-link)
+- Hotfixes: `upsertEventSpan()` now writes to `spans_fts` (was silently dropping new event-spans); `MATCH` query is sanitized via `sanitizeFtsQuery()`; snippet HTML is escaped at the API layer to make `dangerouslySetInnerHTML` safe.
 
-**P1 verification:** `bun x tsc --noEmit`, `bun run lint` (0 errors; 3 pre-existing warnings), `bun test tests/` (50 pass), and isolated DB insert verified an FTS row with payload text.
+**Verification:** `bun x tsc --noEmit`, `bun run lint` (0 errors, 3 pre-existing warnings), `bun test tests/` (61 pass); live DB tests confirm inserts go through FTS, malicious queries fail safely.
 
 **Todos:**
 - [x] F-008-P1 storage layer
-- [ ] F-008-P2 search API
-- [ ] F-008-P3 backfill + UI
-- [ ] F-008-P4 optional polish
+- [x] F-008-P2 search API
+- [x] F-008-P3 backfill + UI
+- [x] F-008-P4 hotfix (upsertEventSpan FTS write, MATCH sanitizer, snippet escape)
+- [ ] F-008-P5 polish / advanced filters (deferred to F-014)
 
 ---
 

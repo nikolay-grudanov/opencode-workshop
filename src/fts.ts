@@ -1,5 +1,24 @@
 const MAX_CONTENT_TEXT_LENGTH = 8192;
 
+const FTS5_RESERVED = /([\"():^])/g;
+
+export function sanitizeFtsQuery(input: string): string {
+  const stripped = input.replace(FTS5_RESERVED, " ").trim();
+  if (!stripped) return "";
+  const tokens = stripped.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return "";
+  return tokens.map((token) => `"${token.replace(/"/g, "")}"`).join(" AND ");
+}
+
+export function escapeSnippetHtml(snippet: string): string {
+  return snippet
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 type SpanContent = {
   input_payload?: string | null;
   output_payload?: string | null;
