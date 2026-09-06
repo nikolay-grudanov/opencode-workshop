@@ -9,7 +9,7 @@ import { useReplay } from "../hooks/use-replay";
 import { RotateCcw, ArrowRight, X, ChevronDown } from "lucide-react";
 import { C } from "../utils/colors";
 import { fetchPrices } from "../utils/costs";
-import { searchWorkshopSpans, type WorkshopSearchResult } from "../api/query-api";
+import { searchWorkshopSpans, fetchWorkshopFacets, type WorkshopSearchResult, type WorkshopFacetsResponse } from "../api/query-api";
 import { parseReplayMetadata } from "../utils/types";
 import type { Run } from "../utils/types";
 import { useWorkshopConnected, useWorkshopMessage } from "../hooks/use-workshop-ws";
@@ -55,6 +55,12 @@ export function RunsPage() {
   const [fullTextResults, setFullTextResults] = useState<import("../api/query-api").WorkshopSearchResult[]>([]);
   const [fullTextLoading, setFullTextLoading] = useState(false);
   const [fullTextTotal, setFullTextTotal] = useState(0);
+  const [filterAgent, setFilterAgent] = useState("");
+  const [filterUser, setFilterUser] = useState("");
+  const [filterProject, setFilterProject] = useState("");
+  const [filterBranch, setFilterBranch] = useState("");
+  const [filterCommit, setFilterCommit] = useState("");
+  const [facets, setFacets] = useState<WorkshopFacetsResponse>({ agents: [], users: [], projects: [], branches: [] });
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const wsConnected = useWorkshopConnected();
   const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null);
@@ -84,18 +90,30 @@ export function RunsPage() {
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
   useEffect(() => {
+    fetchWorkshopFacets().then(setFacets).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const q = search.trim();
     if (!q) { setFullTextResults([]); setFullTextTotal(0); return; }
     let cancelled = false;
     setFullTextLoading(true);
     const timer = window.setTimeout(() => {
-      searchWorkshopSpans({ query: q, limit: 50 })
+      searchWorkshopSpans({
+        query: q,
+        limit: 50,
+        agent: filterAgent.trim() || undefined,
+        user: filterUser.trim() || undefined,
+        project: filterProject.trim() || undefined,
+        branch: filterBranch.trim() || undefined,
+        commit: filterCommit.trim() || undefined,
+      })
         .then((response) => { if (!cancelled) { setFullTextResults(response.results); setFullTextTotal(response.total); } })
         .catch(() => { if (!cancelled) { setFullTextResults([]); setFullTextTotal(0); } })
         .finally(() => { if (!cancelled) setFullTextLoading(false); });
     }, 200);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [search]);
+  }, [search, filterAgent, filterUser, filterProject, filterBranch, filterCommit]);
 
   useWorkshopMessage(fetchRuns);
 
@@ -304,9 +322,25 @@ export function RunsPage() {
               <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wide" style={{ color: C.fg1 }}>
                 {fullTextLoading ? "Searching spans…" : `Matches (${fullTextTotal})`}
               </div>
+              <div className="mb-2 grid grid-cols-2 gap-1">
+                <input list="facets-agents" value={filterAgent} onChange={(e) => setFilterAgent(e.target.value)} placeholder="agent" className="px-1 py-0.5 text-[10px] rounded" style={{ background: "rgba(255,255,255,0.05)", color: C.fg3, border: `1px solid ${filterAgent ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)"}` }} />
+                <input list="facets-users" value={filterUser} onChange={(e) => setFilterUser(e.target.value)} placeholder="user" className="px-1 py-0.5 text-[10px] rounded" style={{ background: "rgba(255,255,255,0.05)", color: C.fg3, border: `1px solid ${filterUser ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)"}` }} />
+                <input list="facets-projects" value={filterProject} onChange={(e) => setFilterProject(e.target.value)} placeholder="project" className="px-1 py-0.5 text-[10px] rounded" style={{ background: "rgba(255,255,255,0.05)", color: C.fg3, border: `1px solid ${filterProject ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)"}` }} />
+                <input list="facets-branches" value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)} placeholder="branch" className="px-1 py-0.5 text-[10px] rounded" style={{ background: "rgba(255,255,255,0.05)", color: C.fg3, border: `1px solid ${filterBranch ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)"}` }} />
+                <input value={filterCommit} onChange={(e) => setFilterCommit(e.target.value)} placeholder="commit prefix" className="col-span-2 px-1 py-0.5 text-[10px] rounded font-mono" style={{ background: "rgba(255,255,255,0.05)", color: C.fg3, border: `1px solid ${filterCommit ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)"}` }} />
+              </div>
+              <datalist id="facets-agents">{facets.agents.map((a) => <option key={a} value={a} />)}</datalist>
+              <datalist id="facets-users">{facets.users.map((u) => <option key={u} value={u} />)}</datalist>
+              <datalist id="facets-projects">{facets.projects.map((p) => <option key={p} value={p} />)}</datalist>
+              <datalist id="facets-branches">{facets.branches.map((b) => <option key={b} value={b} />)}</datalist>
               {!fullTextLoading && fullTextResults.map((match: WorkshopSearchResult) => (
-                <button key={`${match.run_id}:${match.span_id}`} className="mb-1 block w-full rounded px-1.5 py-1 text-left hover:bg-white/10" onClick={() => navigate(`${runPath(match.run_id)}?focus_span=${encodeURIComponent(match.span_id)}`)}>
-                  <div className="truncate text-[10px] font-mono" style={{ color: C.fg2 }}>{match.span_name} · {match.run_id.slice(0, 8)}</div>
+                <button key={`${match.run_id}:${match.span_id}`} className="mb-1 block w-full rounded px-1.5 py-1 text-left hover:bg-white/10" onClick={() => navigate(`${runPath(match.run_id)}/span/${encodeURIComponent(match.span_id)}`)}>
+                  <div className="truncate text-[10px] font-mono" style={{ color: C.fg2 }}>{match.span_name} · {match.run_id.slice(0, 8)}{match.event_name ? ` · ${match.event_name}` : ""}</div>
+                  {match.git && (match.git.project || match.git.branch || match.git.commit) ? (
+                    <div className="truncate text-[9px] font-mono" style={{ color: C.fg0 }}>
+                      {[match.git.project, match.git.branch, match.git.commit?.slice(0, 7)].filter(Boolean).join(" · ")}
+                    </div>
+                  ) : null}
                   <div className="text-[10px] leading-snug" style={{ color: C.fg1 }} dangerouslySetInnerHTML={{ __html: match.snippet }} />
                 </button>
               ))}

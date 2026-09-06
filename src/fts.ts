@@ -1,6 +1,6 @@
 const MAX_CONTENT_TEXT_LENGTH = 8192;
 
-const FTS5_RESERVED = /([\"():^])/g;
+const FTS5_RESERVED = /(["():^])/g;
 
 export function sanitizeFtsQuery(input: string): string {
   const stripped = input.replace(FTS5_RESERVED, " ").trim();

@@ -56,12 +56,6 @@ export type Signal = z.infer<typeof signalSchema>;
 export type QueryEvent = z.infer<typeof queryEventSchema>;
 export type TraceSpan = z.infer<typeof traceSpanSchema>;
 export type SearchMode = "text" | "semantic" | "regex";
-export async function searchWorkshopSpans(opts: { query: string; limit?: number; offset?: number }): Promise<WorkshopSearchResponse> {
-  const params = new URLSearchParams({ q: opts.query, limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) });
-  const res = await fetch(`/api/search?${params}`);
-  if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Search failed (${res.status})`);
-  return await res.json() as WorkshopSearchResponse;
-}
 
 export interface WorkshopSearchResult {
   span_id: string;
@@ -71,12 +65,42 @@ export interface WorkshopSearchResult {
   model: string | null;
   snippet: string;
   bm25: number;
+  event_name: string | null;
+  user_id: string | null;
+  git: { project?: string; branch?: string; commit?: string } | null;
 }
 
 export interface WorkshopSearchResponse {
   query: string;
   total: number;
   results: WorkshopSearchResult[];
+  agents?: string[];
+  users?: string[];
+  projects?: string[];
+  branches?: string[];
+}
+
+export interface WorkshopFacetsResponse {
+  agents: string[];
+  users: string[];
+  projects: string[];
+  branches: string[];
+}
+
+export async function searchWorkshopSpans(opts: { query: string; limit?: number; offset?: number; agent?: string; user?: string; project?: string; branch?: string; commit?: string }): Promise<WorkshopSearchResponse> {
+  const params = new URLSearchParams({ q: opts.query, limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) });
+  for (const key of ["agent", "user", "project", "branch", "commit"] as const) {
+    if (opts[key]) params.set(key, opts[key]);
+  }
+  const res = await fetch(`/api/search?${params}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Search failed (${res.status})`);
+  return await res.json() as WorkshopSearchResponse;
+}
+
+export async function fetchWorkshopFacets(): Promise<WorkshopFacetsResponse> {
+  const res = await fetch(`/api/facets`);
+  if (!res.ok) throw new Error(`Facets failed (${res.status})`);
+  return await res.json() as WorkshopFacetsResponse;
 }
 
 

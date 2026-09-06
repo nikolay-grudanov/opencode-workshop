@@ -43,7 +43,33 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 - [x] F-008-P2 search API
 - [x] F-008-P3 backfill + UI
 - [x] F-008-P4 hotfix (upsertEventSpan FTS write, MATCH sanitizer, snippet escape)
-- [ ] F-008-P5 polish / advanced filters (deferred to F-014)
+- [x] F-008-P5 polish / advanced filters (deferred to F-014)
+
+---
+
+### F-014 — Advanced search filters (Workshop + Plugin)
+
+**Context:** Plugin-side F-014 captures project/branch/head once at startup and stamps them into every track_partial event as `properties.git`. Workshop-side F-014 exposes `/api/search` filters (`agent`, `user`, `project`, `branch`, `commit`) plus a `/api/facets` endpoint and wires them into the RunsPage sidebar with autocomplete via `<datalist>`. Cross-repo change because git metadata originates at the plugin.
+
+**Plugin (v0.1.0-kolya.14):**
+- [x] `collectGitContext(worktree)` reads `rev-parse HEAD/abbrev-ref/show-toplevel` via `execFileSync` with `timeout: 1500ms`
+- [x] `EventShipper2` accepts `gitContext` and stamps `properties.git` on every event
+- [x] Bundles + static copy updated, `node --check` clean
+
+**Workshop (this feature):**
+- [x] `searchSpans()` extended with agent/user/project/branch/commit filters (JOIN runs)
+- [x] `computeFacets()` returns top-50 distinct values per facet
+- [x] `/api/facets` route
+- [x] `/api/search` accepts `?agent=…&user=…&project=…&branch=…&commit=…`
+- [x] RunsPage sidebar: 4 `<datalist>` inputs + commit prefix input
+- [x] Result rows show `event_name` and git context (project/branch/commit prefix)
+- [x] Live verified: 6 agents in facets, 2 results for `F011_PATCH_OK`, filter narrows results
+
+**Todos:**
+- [x] F-014-P1 plugin git capture
+- [x] F-014-P2 workshop search API filters + facets
+- [x] F-014-P3 runs page UI for filters + autocomplete
+- [ ] F-014-P4 polish / cross-repo doc
 
 ---
 

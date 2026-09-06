@@ -387,18 +387,44 @@ export function backfillFts(): number {
   return rows.length;
 }
 
-export function searchSpans(query: string, limit = 50, offset = 0) {
-  const match = sanitizeFtsQuery(query);
-  if (!match) return { query: query.trim(), total: 0, results: [] };
-  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
-  const safeOffset = Math.max(0, Math.floor(offset));
+export function computeFacets(): { agents: string[]; users: string[]; projects: string[]; branches: string[] } {
   const db = getDrizzleDb().$client;
-  const total = db.query("SELECT COUNT(*) AS count FROM spans_fts WHERE spans_fts MATCH ?").get(match) as { count: number };
-  const results = db.query(`SELECT span_id, run_id, span_name, span_type, model,
+  const agents = (db.query(`SELECT event_name, COUNT(*) AS n FROM runs WHERE event_name IS NOT NULL AND event_name != '' GROUP BY event_name ORDER BY n DESC LIMIT 50`).all() as Array<{ event_name: string }>).map((r) => r.event_name);
+  const users = (db.query(`SELECT user_id, COUNT(*) AS n FROM runs WHERE user_id IS NOT NULL AND user_id != '' GROUP BY user_id ORDER BY n DESC LIMIT 50`).all() as Array<{ user_id: string }>).map((r) => r.user_id);
+  const projects = (db.query(`SELECT json_extract(metadata, '$.git.project') AS project, COUNT(*) AS n FROM runs WHERE json_extract(metadata, '$.git.project') IS NOT NULL GROUP BY project ORDER BY n DESC LIMIT 50`).all() as Array<{ project: string }>).map((r) => r.project);
+  const branches = (db.query(`SELECT json_extract(metadata, '$.git.branch') AS branch, COUNT(*) AS n FROM runs WHERE json_extract(metadata, '$.git.branch') IS NOT NULL GROUP BY branch ORDER BY n DESC LIMIT 50`).all() as Array<{ branch: string }>).map((r) => r.branch);
+  return { agents, users, projects, branches };
+}
+
+export function searchSpans(query: string, opts: { limit?: number; offset?: number; agent?: string; user?: string; project?: string; branch?: string; commit?: string } = {}) {
+  const match = sanitizeFtsQuery(query);
+  const filters: Array<string> = [];
+  const filterParams: string[] = [];
+  if (opts.agent) { filters.push("runs.event_name = ?"); filterParams.push(opts.agent); }
+  if (opts.user) { filters.push("runs.user_id = ?"); filterParams.push(opts.user); }
+  if (opts.project || opts.branch || opts.commit) {
+    const gitParts: string[] = [];
+    if (opts.project) { gitParts.push("json_extract(runs.metadata, '$.git.project') = ?"); filterParams.push(opts.project); }
+    if (opts.branch) { gitParts.push("json_extract(runs.metadata, '$.git.branch') = ?"); filterParams.push(opts.branch); }
+    if (opts.commit) { gitParts.push("json_extract(runs.metadata, '$.git.commit') LIKE ?"); filterParams.push(`%${opts.commit}%`); }
+    if (gitParts.length) filters.push("(" + gitParts.join(" AND ") + ")");
+  }
+  const filterClause = filters.length ? " AND " + filters.join(" AND ") : "";
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(opts.limit ?? 50)));
+  const safeOffset = Math.max(0, Math.floor(opts.offset ?? 0));
+  const db = getDrizzleDb().$client;
+  if (!match) {
+    return { query: query.trim(), total: 0, results: [], agents: [], users: [], projects: [], branches: [] };
+  }
+  const total = db.query(`SELECT COUNT(*) AS count FROM spans_fts JOIN runs ON runs.id = spans_fts.run_id WHERE spans_fts MATCH ?${filterClause}`)
+    .get(match, ...filterParams) as { count: number };
+  const results = db.query(`SELECT spans_fts.span_id, spans_fts.run_id, spans_fts.span_name, spans_fts.span_type, spans_fts.model,
     snippet(spans_fts, 6, '<mark>', '</mark>', '…', 32) AS snippet,
-    bm25(spans_fts) AS bm25
-    FROM spans_fts WHERE spans_fts MATCH ? ORDER BY bm25(spans_fts), span_id LIMIT ? OFFSET ?`)
-    .all(match, safeLimit, safeOffset) as Array<Record<string, unknown>>;
+    bm25(spans_fts) AS bm25,
+    runs.event_name AS event_name, runs.user_id AS user_id, json_extract(runs.metadata, '$.git') AS git
+    FROM spans_fts JOIN runs ON runs.id = spans_fts.run_id WHERE spans_fts MATCH ?${filterClause}
+    ORDER BY bm25(spans_fts), spans_fts.span_id LIMIT ? OFFSET ?`)
+    .all(match, ...filterParams, safeLimit, safeOffset) as Array<Record<string, unknown>>;
   const safeResults = results.map((row) => ({
     span_id: String(row.span_id),
     run_id: String(row.run_id),
@@ -407,8 +433,12 @@ export function searchSpans(query: string, limit = 50, offset = 0) {
     model: row.model == null ? null : String(row.model),
     snippet: escapeSnippetHtml(String(row.snippet ?? "")),
     bm25: Number(row.bm25 ?? 0),
+    event_name: row.event_name == null ? null : String(row.event_name),
+    user_id: row.user_id == null ? null : String(row.user_id),
+    git: row.git == null ? null : JSON.parse(String(row.git)) as { project?: string; branch?: string; commit?: string },
   }));
-  return { query: query.trim(), total: Number(total?.count ?? 0), results: safeResults };
+  const facets = computeFacets();
+  return { query: query.trim(), total: Number(total?.count ?? 0), results: safeResults, ...facets };
 }
 
 export function upsertEventSpan(span: { id: string; run_id: string; name: string; span_type?: string; status?: string; input_payload?: string; output_payload?: string; start_time_ms: number; end_time_ms: number; duration_ms: number; model?: string; attributes?: string }) {
