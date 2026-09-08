@@ -879,10 +879,19 @@ export async function createServer(port: number) {
   });
   app.get("/api/search", (req, res) => {
     const query = typeof req.query.q === "string" ? req.query.q : "";
-    if (!query.trim()) return res.status(400).json({ error: "q is required" });
+    const qTrim = query.trim();
+    if (!qTrim && !req.query.agent && !req.query.user && !req.query.project && !req.query.branch && !req.query.commit && !req.query.model && !req.query.spanName && !req.query.spanType) {
+      return res.status(400).json({ error: "q or a filter is required" });
+    }
     try {
       const pick = (k: string) => typeof req.query[k] === "string" && (req.query[k] as string).trim() ? (req.query[k] as string).trim() : undefined;
-      return res.json(searchSpans(query, {
+      const pickBool = (k: string) => {
+        const v = req.query[k];
+        if (v === "true" || v === "1") return true;
+        if (v === "false" || v === "0") return false;
+        return undefined;
+      };
+      return res.json(searchSpans(qTrim, {
         limit: Number(req.query.limit) || 50,
         offset: Number(req.query.offset) || 0,
         agent: pick("agent"),
@@ -890,6 +899,12 @@ export async function createServer(port: number) {
         project: pick("project"),
         branch: pick("branch"),
         commit: pick("commit"),
+        model: pick("model"),
+        spanName: pick("spanName"),
+        spanType: pick("spanType"),
+        hasErrors: pickBool("hasErrors"),
+        dateFrom: pick("dateFrom"),
+        dateTo: pick("dateTo"),
       }));
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : "invalid search query" });

@@ -1,933 +1,504 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Search, Loader2, AlertCircle, ChevronDown, X, HelpCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Search as SearchIcon, Loader2, AlertCircle, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
-import { RunDetail } from "../components/RunDetail";
-import { parseMessages } from "../components/MessageList";
-import { Dots } from "../components/Icons";
-import { SecretInput } from "../components/SecretInput";
 import { C } from "../utils/colors";
 import { ago } from "../utils/helpers";
-import type { Run, Span } from "../utils/types";
-import { Markdown } from "../components/Markdown";
-import { tracePath } from "../utils/navigation";
-import { useWorkshopEvent } from "../hooks/use-workshop-ws";
-import {
-  fetchSignals,
-  fetchTraceSpans as fetchTraces,
-  listEvents,
-  mapTraceToSpans,
-  searchEvents,
-  type QueryEvent,
-  type SearchMode,
-  type Signal,
-} from "../api/query-api";
-import { detectSubAgents } from "../api/agents";
-import { getSecretStatuses, purgeLegacyBrowserSecrets, saveSecret, type SecretStatus } from "../api/secrets";
-
-function daysAgo(n: number): string {
-  return new Date(Date.now() - n * 86400000).toISOString();
-}
-
-const DATE_PRESETS = [
-  { label: "24h", value: "1" },
-  { label: "7d", value: "7" },
-  { label: "30d", value: "30" },
-] as const;
-
-// Hover hints for the mode chips. Kept terse — the right-pane welcome panel
-// has the long-form explanation; this is just for the in-context tooltip.
-const MODE_HINTS: Record<SearchMode, string> = {
-  text: "Substring match across user / assistant content. Fast, no ranking.",
-  semantic: "Meaning-based, relevance-ranked. Limited to the last 14 days.",
-  regex: "Regex over content (e.g. error|timeout, ^Failed.+).",
-};
+import { runPath } from "../utils/navigation";
+import { useT } from "../i18n";
 
 /**
- * Per-mode cap on preset range. Text/regex chunk cleanly across multiple
- * windows because results are filtered by content match. Semantic search
- * ranks by relevance within each request, so merging results across windows
- * doesn't produce a globally-best ranking — we cap it at the server's native
- * 14-day limit (i.e. anything ≤ 14d, which means 7d here) to keep results
- * meaningful.
- */
-const MAX_PRESET_DAYS_BY_MODE: Record<SearchMode, number> = {
-  text: Infinity,
-  regex: Infinity,
-  semantic: 14,
-};
-
-function isPresetAllowed(mode: SearchMode, presetDays: number): boolean {
-  return presetDays <= MAX_PRESET_DAYS_BY_MODE[mode];
-}
-
-/**
- * The /v1/events/search endpoint caps each request at 14 days. We chunk wider
- * ranges into successive windows so the user can pick a 30d preset without
- * hitting BAD_REQUEST. We use 13 to stay safely under the server's strict
- * `> 14` check (clock skew between client and server can otherwise tip an
- * intended 14d range over the limit).
+ * F-017: local multi-filter search across all Workshop spans.
  *
- * This only applies to text/regex modes — semantic ranks results within a
- * single request, so chunking would yield a per-window pseudo-ranking rather
- * than a true global one. We disable >14d presets for semantic instead (see
- * MAX_PRESET_DAYS_BY_MODE).
+ * Backed by GET /api/search (no cloud). Filterable dimensions:
+ *   - free-text query (FTS5 BM25)
+ *   - agent (event_name), user, project, branch, commit prefix
+ *   - model, span name, span type
+ *   - hasErrors (status=ERROR or live_event=error)
+ *   - date from/to
  */
-const MAX_SEARCH_WINDOW_DAYS = 13;
 
-interface DateWindow { gte: string; lt: string; }
+interface Facets {
+  agents: string[];
+  users: string[];
+  projects: string[];
+  branches: string[];
+  models: string[];
+  spans: string[];
+}
 
-function buildSearchWindows(totalDays: number): DateWindow[] {
-  const windows: DateWindow[] = [];
-  let endMs = Date.now();
-  let remaining = totalDays;
-  while (remaining > 0) {
-    const chunk = Math.min(remaining, MAX_SEARCH_WINDOW_DAYS);
-    const startMs = endMs - chunk * 86400000;
-    windows.push({ gte: new Date(startMs).toISOString(), lt: new Date(endMs).toISOString() });
-    remaining -= chunk;
-    endMs = startMs;
-  }
-  return windows;
+interface SearchResult {
+  span_id: string;
+  run_id: string;
+  span_name: string;
+  span_type: string | null;
+  model: string | null;
+  snippet: string;
+  bm25: number;
+  event_name: string | null;
+  user_id: string | null;
+  git: { project?: string; branch?: string; commit?: string } | null;
+}
+
+interface SearchResponse {
+  query: string;
+  total: number;
+  results: SearchResult[];
+  agents: string[];
+  users: string[];
+  projects: string[];
+  branches: string[];
+  models: string[];
+  spans: string[];
+}
+
+interface FilterState {
+  q: string;
+  agent: string;
+  user: string;
+  project: string;
+  branch: string;
+  commit: string;
+  model: string;
+  spanName: string;
+  spanType: string;
+  hasErrors: boolean;
+  dateFrom: string;
+  dateTo: string;
+}
+
+const EMPTY_FILTERS: FilterState = {
+  q: "",
+  agent: "",
+  user: "",
+  project: "",
+  branch: "",
+  commit: "",
+  model: "",
+  spanName: "",
+  spanType: "",
+  hasErrors: false,
+  dateFrom: "",
+  dateTo: "",
+};
+
+const SPAN_TYPES = ["TRACE", "LLM_GENERATION", "TOOL_CALL", "AGENT_ROOT", "INTERNAL"];
+
+function isFilterActive(f: FilterState): boolean {
+  return (
+    f.q.trim().length > 0 ||
+    !!f.agent ||
+    !!f.user ||
+    !!f.project ||
+    !!f.branch ||
+    !!f.commit ||
+    !!f.model ||
+    !!f.spanName ||
+    !!f.spanType ||
+    f.hasErrors ||
+    !!f.dateFrom ||
+    !!f.dateTo
+  );
+}
+
+function filterToParams(f: FilterState): URLSearchParams {
+  const p = new URLSearchParams();
+  if (f.q.trim()) p.set("q", f.q.trim());
+  if (f.agent) p.set("agent", f.agent);
+  if (f.user) p.set("user", f.user);
+  if (f.project) p.set("project", f.project);
+  if (f.branch) p.set("branch", f.branch);
+  if (f.commit) p.set("commit", f.commit);
+  if (f.model) p.set("model", f.model);
+  if (f.spanName) p.set("spanName", f.spanName);
+  if (f.spanType) p.set("spanType", f.spanType);
+  if (f.hasErrors) p.set("hasErrors", "true");
+  if (f.dateFrom) p.set("dateFrom", f.dateFrom);
+  if (f.dateTo) p.set("dateTo", f.dateTo);
+  return p;
 }
 
 export function SearchPage() {
   const navigate = useNavigate();
   const { runId: routeRunId } = useParams<{ runId?: string }>();
-  const selectedEventId = routeRunId ? decodeURIComponent(routeRunId) : null;
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<SearchMode>("text");
-  const [selectedSignal, setSelectedSignal] = useState<string>("");
-  const [dateRange, setDateRange] = useState("7");
-  const [results, setResults] = useState<QueryEvent[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [signals, setSignals] = useState<Signal[]>([]);
-  const [signalsLoading, setSignalsLoading] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  // Chunked-pagination state. `windows` is empty in browse mode (listEvents has
-  // no 14d cap); for search mode it holds the time slices we'll page through
-  // sequentially. `windowIdx` is the slice we're currently consuming.
-  const [windows, setWindows] = useState<DateWindow[]>([]);
-  const [windowIdx, setWindowIdx] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  // Guards the on-mount browse below so it doesn't re-fire on every render.
-  // Plain ref (not state) because we don't want to trigger a render on flip.
-  const didInitialBrowse = useRef(false);
-  const [hasQueryKey, setHasQueryKey] = useState(false);
+  const { t } = useT();
 
-  const loadQueryKeyStatus = useCallback(async () => {
-    purgeLegacyBrowserSecrets();
-    const statuses = await getSecretStatuses();
-    return statuses.query.configured;
+  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+  const [draft, setDraft] = useState<FilterState>(EMPTY_FILTERS);
+  const [facets, setFacets] = useState<Facets | null>(null);
+  const [response, setResponse] = useState<SearchResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/facets")
+      .then((r) => r.json())
+      .then(setFacets)
+      .catch(() => setFacets({ agents: [], users: [], projects: [], branches: [], models: [], spans: [] }));
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    loadQueryKeyStatus()
-      .then((configured) => {
-        if (!cancelled) setHasQueryKey(configured);
-      })
-      .catch(() => {
-        if (!cancelled) setHasQueryKey(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadQueryKeyStatus]);
-
-  useWorkshopEvent("secrets_updated", (data: { key?: string; status?: SecretStatus }) => {
-    if (data?.key !== "query" || !data.status) return;
-    setHasQueryKey(data.status.configured);
-  });
-
-  useEffect(() => {
-    if (!hasQueryKey) return;
-    setSignalsLoading(true);
-    fetchSignals().then(setSignals).catch(() => {}).finally(() => setSignalsLoading(false));
-  }, [hasQueryKey]);
-
-  /**
-   * Fetch one page. Pass `cursor` to continue inside the current window, or
-   * `windowIndex` to start fetching the first page of a different window.
-   * Omit both for an initial search.
-   */
-  const doSearch = useCallback(async (opts: { append?: boolean; cursor?: string; windowIndex?: number } = {}) => {
-    const isAppend = !!opts.append;
-    if (isAppend) setLoadingMore(true); else setLoading(true);
-    setError(null);
-    if (!isAppend) setHasSearched(true);
-
-    try {
-      const trimmed = query.trim();
-      const totalDays = Number(dateRange);
-
-      // Build (or reuse) the per-search window list. Only search mode needs
-      // chunking — `/v1/events` has no date-range cap, so we leave `windows`
-      // empty and pass a single `gte` like before.
-      const activeWindows: DateWindow[] = isAppend
-        ? windows
-        : trimmed
-          ? buildSearchWindows(totalDays)
-          : [];
-      const activeIdx = opts.windowIndex ?? (isAppend ? windowIdx : 0);
-      const useWindow = activeWindows.length > 0;
-      const w = useWindow ? activeWindows[activeIdx] : undefined;
-
-      const fetchOpts = {
-        cursor: opts.cursor,
-        timestampGte: w?.gte ?? daysAgo(totalDays),
-        timestampLt: w?.lt,
-      };
-
-      const res = trimmed
-        ? await searchEvents({ query: trimmed, mode, signal: selectedSignal || undefined, ...fetchOpts })
-        : await listEvents({ signal: selectedSignal || undefined, ...fetchOpts });
-
-      if (isAppend) setResults(prev => [...prev, ...res.data]);
-      else setResults(res.data);
-
-      let nextCursor = res.meta.cursor;
-      let nextHasMore = res.meta.has_more;
-      let nextIdx = activeIdx;
-
-      // Current window is exhausted but we still have older windows to scan.
-      // Surface this as `hasMore` so "load more" remains enabled; the next
-      // click will fetch the first page of the next window.
-      if (useWindow && !nextHasMore && activeIdx < activeWindows.length - 1) {
-        nextIdx = activeIdx + 1;
-        nextCursor = null;
-        nextHasMore = true;
-      }
-
-      setCursor(nextCursor);
-      setHasMore(nextHasMore);
-      if (!isAppend) setWindows(activeWindows);
-      setWindowIdx(nextIdx);
-    } catch (e: any) {
-      setError(e.message ?? "Search failed");
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, [query, mode, selectedSignal, dateRange, windows, windowIdx]);
-
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); doSearch(); };
-
-  // doSearch's identity changes on every keystroke (its deps include `query`),
-  // so we keep a ref to the latest version and trigger runs through that. This
-  // lets useEffect-based auto-browse and example-prefill flows depend on
-  // primitives instead of refiring on every keystroke.
-  const doSearchRef = useRef(doSearch);
-  useEffect(() => { doSearchRef.current = doSearch; }, [doSearch]);
-
-  // Auto-browse on mount so the left pane is never staring-into-the-void empty.
-  // Most users land here to triage recent prod traffic — give them something to
-  // click without forcing a "press Go to discover this works" friction step.
-  useEffect(() => {
-    if (didInitialBrowse.current) return;
-    if (!hasQueryKey) return;
-    didInitialBrowse.current = true;
-    doSearchRef.current();
-  }, [hasQueryKey]);
-
-  // Run a one-shot search after a state-bump. setRunToken from the example
-  // buttons; the effect fires after React commits the new query/mode/dateRange
-  // state, so doSearchRef.current closes over the new values.
-  const [runToken, setRunToken] = useState(0);
-  useEffect(() => {
-    if (runToken === 0) return;
-    doSearchRef.current();
-  }, [runToken]);
-
-  const runExample = useCallback((nextQuery: string, nextMode: SearchMode) => {
-    setQuery(nextQuery);
-    setMode(nextMode);
-    if (!isPresetAllowed(nextMode, Number(dateRange))) {
-      const fallback = [...DATE_PRESETS].reverse().find(p => isPresetAllowed(nextMode, Number(p.value)));
-      if (fallback) setDateRange(fallback.value);
-    }
-    setRunToken(t => t + 1);
-    inputRef.current?.focus();
-  }, [dateRange]);
-
-  const handleLoadMore = useCallback(() => {
-    if (cursor) {
-      doSearch({ append: true, cursor });
-    } else if (windowIdx < windows.length - 1) {
-      doSearch({ append: true, windowIndex: windowIdx + 1 });
-    }
-  }, [cursor, windowIdx, windows, doSearch]);
-
-  // Switching to a mode that doesn't support the current preset (e.g. picking
-  // semantic while 30d is active) auto-falls-back to the largest still-allowed
-  // preset so the user never sits in an invalid state.
-  const handleModeChange = useCallback((nextMode: SearchMode) => {
-    setMode(nextMode);
-    if (!isPresetAllowed(nextMode, Number(dateRange))) {
-      const fallback = [...DATE_PRESETS]
-        .reverse()
-        .find(p => isPresetAllowed(nextMode, Number(p.value)));
-      if (fallback) setDateRange(fallback.value);
-    }
-  }, [dateRange]);
-
-  const selectedEvent = useMemo(
-    () => selectedEventId ? results.find((evt) => evt.id === selectedEventId) ?? null : null,
-    [results, selectedEventId],
-  );
-
-  return (
-    <div className="relative h-full overflow-hidden">
-      <div
-        className={`h-full flex transition-all duration-300 ${hasQueryKey ? "" : "pointer-events-none select-none blur-[3px] opacity-50"}`}
-        aria-hidden={!hasQueryKey}
-      >
-
-      <div className="w-80 flex-shrink-0 flex flex-col" style={{ borderRight: "1px solid rgba(255,255,255,0.06)" }}>
-        <div className="p-3 space-y-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-          <form onSubmit={handleSubmit} className="flex gap-1.5">
-            <div className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${query ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)"}` }}>
-              <Search className="h-3 w-3 shrink-0" style={{ color: C.fg0 }} />
-              <input ref={inputRef} className="flex-1 min-w-0 bg-transparent text-[11px] font-mono outline-none" style={{ color: C.fg3 }}
-                placeholder="Search events..." value={query} onChange={e => setQuery(e.target.value)} />
-              {query && <button type="button" onClick={() => setQuery("")} className="shrink-0"><X className="h-2.5 w-2.5" style={{ color: C.fg0 }} /></button>}
-            </div>
-            <button type="submit" disabled={loading} className="px-2.5 py-1.5 rounded text-[10px] font-medium shrink-0"
-              style={{ background: "#fff", color: "#000", opacity: loading ? 0.5 : 1 }}>
-              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Go"}
-            </button>
-          </form>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex rounded overflow-hidden" style={{ background: "rgba(255,255,255,0.03)" }}>
-              {(["text", "semantic", "regex"] as const).map(m => (
-                <button key={m} className="px-2 py-0.5 text-[10px] font-mono transition-colors"
-                  style={{ background: mode === m ? "rgba(255,255,255,0.06)" : "transparent", color: mode === m ? C.fg3 : C.fg0 }}
-                  title={MODE_HINTS[m]}
-                  onClick={() => handleModeChange(m)}>{m}</button>
-              ))}
-            </div>
-            <div className="flex rounded overflow-hidden" style={{ background: "rgba(255,255,255,0.03)" }}>
-              {DATE_PRESETS.map(p => {
-                const allowed = isPresetAllowed(mode, Number(p.value));
-                const tooltip = allowed
-                  ? `Limit to the last ${p.label}`
-                  : `${p.label} not supported in ${mode} mode (server caps semantic search at 14 days)`;
-                return (
-                  <button key={p.value}
-                    className="px-2 py-0.5 text-[10px] font-mono transition-colors"
-                    style={{
-                      background: dateRange === p.value ? "rgba(255,255,255,0.06)" : "transparent",
-                      color: dateRange === p.value ? C.fg3 : C.fg0,
-                      opacity: allowed ? 1 : 0.35,
-                      cursor: allowed ? "pointer" : "not-allowed",
-                    }}
-                    disabled={!allowed}
-                    title={tooltip}
-                    onClick={() => allowed && setDateRange(p.value)}>{p.label}</button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="relative">
-            <select className="w-full appearance-none pl-2 pr-5 py-1 rounded text-[10px] font-mono outline-none cursor-pointer"
-              style={{ background: "rgba(255,255,255,0.04)", color: C.fg2, border: `1px solid rgba(255,255,255,0.06)` }}
-              value={selectedSignal} onChange={e => setSelectedSignal(e.target.value)} disabled={signalsLoading}>
-              <option value="">All signals</option>
-              {signals.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 pointer-events-none" style={{ color: C.fg0 }} />
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-auto p-2 space-y-0.5 sb">
-          {error && (
-            <div className="flex items-center gap-2 px-2 py-2 rounded" style={{ background: "rgba(235,20,20,0.06)" }}>
-              <AlertCircle className="h-3 w-3 shrink-0" style={{ color: C.red }} />
-              <span className="text-[10px]" style={{ color: C.red }}>{error}</span>
-            </div>
-          )}
-          {loading && <div className="flex items-center justify-center py-12"><Loader2 className="h-4 w-4 animate-spin" style={{ color: C.fg0 }} /></div>}
-          {!loading && !hasSearched && (
-            <div className="text-center text-[11px] mt-8 px-2 leading-relaxed" style={{ color: C.fg0 }}>
-              Press <span className="font-mono" style={{ color: C.fg2 }}>Go</span> to browse recent events,
-              or type a query first.
-            </div>
-          )}
-          {!loading && hasSearched && results.length === 0 && !error && (
-            <div className="text-center text-[11px] mt-8 px-2 leading-relaxed" style={{ color: C.fg0 }}>
-              {query.trim()
-                ? <>No matches in this range. Try a wider date preset, a different mode, or clear the signal filter.</>
-                : <>No events in this range. Events appear here once your agent ships traces with a Raindrop write key.</>}
-            </div>
-          )}
-          {!loading && results.map(evt => (
-            <ResultItem key={evt.id} event={evt} selected={selectedEventId === evt.id} onClick={() => navigate(tracePath("/search", evt.id))} />
-          ))}
-          {!loading && hasMore && (
-            <div className="pt-1">
-              <button onClick={handleLoadMore} disabled={loadingMore}
-                className="w-full py-1.5 rounded text-[10px] font-mono" style={{ background: "rgba(255,255,255,0.03)", color: C.fg1 }}>
-                {loadingMore ? <Loader2 className="h-3 w-3 animate-spin mx-auto" /> : "load more"}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-
-      <div className="flex-1 min-w-0 overflow-hidden">
-        {selectedEventId
-          ? <RemoteRunDetail key={selectedEventId} eventId={selectedEventId} event={selectedEvent ?? undefined} />
-          : hasQueryKey
-            ? <SearchWelcome
-                hasResults={results.length > 0}
-                loading={loading}
-                onExample={runExample}
-              />
-            : null
-        }
-      </div>
-      </div>
-      {!hasQueryKey && <SearchLockedOverlay onConnected={() => setHasQueryKey(true)} />}
-    </div>
-  );
-}
-
-function SearchLockedOverlay({ onConnected }: { onConnected: () => void }) {
-  const [pendingKey, setPendingKey] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const trimmed = pendingKey.trim();
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!trimmed) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const status = await saveSecret("query", trimmed);
-      setPendingKey("");
-      if (status.configured) onConnected();
-      purgeLegacyBrowserSecrets();
-      window.dispatchEvent(new CustomEvent("workshop:api-key-change", { detail: { secret: "query" } }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/45 px-6">
-      <div className="w-[640px] max-w-full px-10 py-11 text-center">
-        <div
-          className="mx-auto mb-6 flex h-20 w-20 items-center justify-center"
-          style={{ color: C.fg2 }}
-        >
-          <Search className="h-11 w-11" strokeWidth={1.75} />
-        </div>
-        <h1
-          className="text-center"
-          style={{
-            fontFamily: '"AlphaLyrae", sans-serif',
-            fontSize: "36px",
-            fontWeight: 500,
-            lineHeight: 1.08,
-            letterSpacing: 0,
-            color: C.fg5,
-          }}
-        >
-          Search Production Traces
-        </h1>
-        <p className="mx-auto mt-4 max-w-[520px] text-[17px] font-light leading-8" style={{ color: C.fg2 }}>
-          Connect workshop to your Raindrop account to iterate on production traces locally.
-        </p>
-        <form className="mx-auto mt-8 max-w-[440px] text-left" onSubmit={handleSubmit}>
-          <SecretInput
-            label="Query API"
-            placeholder="your-query-api-key"
-            value={pendingKey}
-            saved={false}
-            onChange={setPendingKey}
-            getKeyUrl="https://auth.raindrop.ai/org/api_keys"
-          />
-          {error && <div className="mt-2 text-[11px]" style={{ color: C.red }}>{error}</div>}
-          <button
-            type="submit"
-            disabled={!trimmed || saving}
-            className="mt-3 w-full rounded py-2 text-[12px] font-medium"
-            style={{ background: "#fff", color: "#000", opacity: trimmed && !saving ? 1 : 0.5 }}
-          >
-            {saving ? "Saving..." : "Connect"}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// Right pane when no event is picked: orient the user, explain the
-// mode / date chips on the left, and offer a one-click sample per mode.
-// While the left pane is still loading we render a slimmer "loading
-// neighbours" hint to avoid a flash of welcome → trace.
-
-function SearchWelcome({
-  hasResults,
-  loading,
-  onExample,
-}: {
-  hasResults: boolean;
-  loading: boolean;
-  onExample: (q: string, mode: SearchMode) => void;
-}) {
-  return (
-    <div className="h-full flex items-center justify-center px-8 py-10 overflow-auto sb">
-      <div className="w-full max-w-md space-y-6">
-        <div className="space-y-2">
-          <Search className="h-4 w-4" style={{ color: C.fg0 }} />
-          <div className="text-sm font-medium" style={{ color: C.fg3 }}>
-            Browse production traces
-          </div>
-          <div className="text-[11px] leading-relaxed" style={{ color: C.fg1 }}>
-            {loading && !hasResults
-              ? <>Loading recent events from <code className="font-mono" style={{ color: C.fg2 }}>query.raindrop.ai</code>…</>
-              : hasResults
-                ? <>Pick an event on the left to view its full trace, replay it, or save it for later.</>
-                : <>Events from <code className="font-mono" style={{ color: C.fg2 }}>query.raindrop.ai</code>. Once your agent ships traces, they'll show up on the left — click any to view, replay, or save.</>}
-          </div>
-        </div>
-
-        <ModeKey />
-
-        <FilterKey />
-
-        <ExampleQueries onExample={onExample} />
-      </div>
-    </div>
-  );
-}
-
-function ModeKey() {
-  const rows: { mode: SearchMode; gloss: string }[] = [
-    { mode: "text", gloss: "Substring match. Fast, no ranking." },
-    { mode: "semantic", gloss: "Meaning-based, ranked. Last 14 days only." },
-    { mode: "regex", gloss: "Pattern, e.g. error|timeout." },
-  ];
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: C.fg0 }}>
-        Search modes
-      </div>
-      <dl className="text-[11px] leading-snug">
-        {rows.map(r => (
-          <div key={r.mode} className="flex gap-2 py-0.5">
-            <dt className="font-mono w-16 shrink-0" style={{ color: C.fg3 }}>{r.mode}</dt>
-            <dd style={{ color: C.fg1 }}>{r.gloss}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
-function FilterKey() {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: C.fg0 }}>
-        Filters
-      </div>
-      <dl className="text-[11px] leading-snug">
-        <div className="flex gap-2 py-0.5">
-          <dt className="font-mono w-16 shrink-0" style={{ color: C.fg3 }}>signal</dt>
-          <dd style={{ color: C.fg1 }}>Tags emitted by your SDK (errors, drops, custom labels).</dd>
-        </div>
-        <div className="flex gap-2 py-0.5">
-          <dt className="font-mono w-16 shrink-0" style={{ color: C.fg3 }}>range</dt>
-          <dd style={{ color: C.fg1 }}>How far back to look. <span style={{ color: C.fg0 }}>30d</span> is text/regex only.</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
-
-function ExampleQueries({ onExample }: { onExample: (q: string, mode: SearchMode) => void }) {
-  // Three buttons, one per mode, so clicking discovers the mode itself rather
-  // than us having to teach all three through copy. Queries chosen to be
-  // generic enough that most users with any traffic will see hits.
-  const examples: { label: string; query: string; mode: SearchMode }[] = [
-    { label: "errors", query: "error", mode: "text" },
-    { label: "user got confused", query: "user got confused", mode: "semantic" },
-    { label: "error|timeout", query: "error|timeout", mode: "regex" },
-  ];
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: C.fg0 }}>
-        Try
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {examples.map(ex => (
-          <button
-            key={ex.label}
-            onClick={() => onExample(ex.query, ex.mode)}
-            className="text-[11px] font-mono px-2 py-1 rounded transition-colors"
-            style={{
-              background: "rgba(255,255,255,0.04)",
-              color: C.fg2,
-              border: `1px solid ${C.border}`,
-            }}
-            title={`Search "${ex.query}" in ${ex.mode} mode`}
-          >
-            <span style={{ color: C.fg0 }}>{ex.mode}:</span> {ex.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ResultItem({ event, selected, onClick }: { event: QueryEvent; selected: boolean; onClick: () => void }) {
-  const ts = new Date(event.timestamp);
-  const timeStr = ts.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " +
-    ts.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
-
-  return (
-    <button className="w-full text-left px-3 py-2.5 rounded-lg transition-all duration-150"
-      style={{
-        background: selected ? "rgba(255,255,255,0.08)" : "transparent",
-        border: selected ? "1px solid rgba(255,255,255,0.15)" : "1px solid transparent",
-      }}
-      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = selected ? "rgba(255,255,255,0.08)" : "transparent"; }}
-      onClick={onClick}>
-      <div className="flex items-center gap-2">
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="flex items-center gap-2">
-            <span className="text-[12px] font-medium truncate" style={{ color: C.fg4 }}>{event.event_name}</span>
-            {event.relevance_score != null && (
-              <span className="text-[9px] font-mono px-1 shrink-0 rounded-full" style={{ background: "rgba(91,141,239,0.1)", color: C.accent }}>
-                {(event.relevance_score * 100).toFixed(0)}%
-              </span>
-            )}
-          </div>
-          {event.user_input && (
-            <div className="text-[10px] truncate mt-0.5" style={{ color: C.fg1 }}>{event.user_input}</div>
-          )}
-          <div className="flex items-center gap-1.5 mt-1 overflow-hidden">
-            {event.signals && event.signals.slice(0, 2).map(sig => (
-              <span key={sig.id} className="text-[8px] font-mono px-1 py-px rounded-full shrink-0" style={{ background: "rgba(165,124,245,0.1)", color: C.purple }}>
-                {sig.name}
-              </span>
-            ))}
-            {event.signals && event.signals.length > 2 && (
-              <span className="text-[8px] font-mono" style={{ color: C.fg0 }}>+{event.signals.length - 2}</span>
-            )}
-            <span className="text-[9px] flex-shrink-0 ml-auto" style={{ color: C.fg0 }}>{timeStr}</span>
-          </div>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function RemoteRunDetail({ eventId, event }: { eventId: string; event?: QueryEvent }) {
-  const [spans, setSpans] = useState<Span[]>([]);
-  const [traceLoading, setTraceLoading] = useState(true);
-  const [traceError, setTraceError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setTraceLoading(true);
-    setTraceError(null);
-
-    fetch(`/api/saved-runs/cache/${eventId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(async (cached) => {
-        if (cached?.spans?.length) {
-          setSpans(cached.spans);
-          return;
-        }
-        const traces = await fetchTraces(eventId);
-        const mapped = mapTraceToSpans(traces, eventId);
-        setSpans(mapped);
-        fetch(`/api/saved-runs/cache/${eventId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spans: mapped }),
-        }).catch(() => {});
-      })
-      .catch(e => setTraceError(e.message ?? "Failed to load traces"))
-      .finally(() => setTraceLoading(false));
-  }, [eventId]);
-
-  if (traceLoading) {
-    return <div className="h-full flex items-center justify-center gap-2" style={{ color: C.fg1 }}>
-      <Loader2 className="h-4 w-4 animate-spin" /> Loading trace...
-    </div>;
-  }
-
-  if (traceError) {
-    return <div className="h-full flex items-center justify-center">
-      <div className="text-center space-y-2">
-        <AlertCircle className="mx-auto h-5 w-5" style={{ color: C.red }} />
-        <div className="text-[11px]" style={{ color: C.red }}>{traceError}</div>
-      </div>
-    </div>;
-  }
-
-  if (spans.length === 0) {
-    return <div className="h-full flex items-center justify-center">
-      <div className="text-[11px]" style={{ color: C.fg0 }}>No trace data for this event</div>
-    </div>;
-  }
-
-  // Build a Run object from the cloud event so RunDetail can render without DB
-  const startMs = Math.min(...spans.map(s => s.start_time_ms));
-  const endMs = Math.max(...spans.map(s => s.end_time_ms));
-  const run: Run = {
-    id: eventId, name: null as any, event_name: event?.event_name ?? eventId,
-    user_id: event?.user_id ?? null, convo_id: event?.convo_id ?? null,
-    started_at: startMs, last_updated_at: endMs,
-    metadata: null as any, model: spans.find(s => s.model)?.model ?? null,
-    finished: 1,
-  } as Run;
-
-  return <RunDetail
-    runId={eventId}
-    routeBase="/search"
-    source="cloud"
-    initialData={{ run, spans, liveEvents: [], subAgents: detectSubAgents(spans) }}
-  />;
-}
-
-interface ConvoTurn {
-  event: QueryEvent;
-  spans: Span[];
-}
-
-type ConvoEvent =
-  | { type: "turn_start"; turnIndex: number; event: QueryEvent; time: number }
-  | { type: "user_msg"; content: string; time: number; turnIndex: number }
-  | { type: "tool_group"; spans: Span[]; time: number; turnIndex: number }
-  | { type: "llm_out"; content: string; time: number; turnIndex: number };
-
-function buildRemoteConvoEvents(turns: ConvoTurn[]): ConvoEvent[] {
-  const events: ConvoEvent[] = [];
-  for (let i = 0; i < turns.length; i++) {
-    const { event, spans } = turns[i];
-    const time = new Date(event.timestamp).getTime();
-    events.push({ type: "turn_start", turnIndex: i, event, time });
-
-    // Extract user message from LLM input spans (same logic as ConvoDetail)
-    const llmSpans = spans.filter(s => s.span_type?.includes("LLM")).sort((a, b) => a.start_time_ms - b.start_time_ms);
-
-    let userMsg: string | null = null;
-    const lastLLM = llmSpans[llmSpans.length - 1];
-    if (lastLLM?.normalized?.kind === "llm" && lastLLM.normalized.userMessage) {
-      userMsg = lastLLM.normalized.userMessage;
-    } else if (lastLLM?.input_payload) {
-      const messages = parseMessages(lastLLM.input_payload);
-      if (messages) {
-        const lastUser = [...messages].reverse().find(m => m.role === "user");
-        if (lastUser) userMsg = lastUser.content;
-      } else {
-        userMsg = lastLLM.input_payload;
-      }
-    }
-    // Fallback to event's user_input
-    if (!userMsg && event.user_input) userMsg = event.user_input;
-
-    if (userMsg) events.push({ type: "user_msg", content: userMsg, time: time + 1, turnIndex: i });
-
-    // Output: prefer LLM span output, fall back to event's assistant_output
-    const outputSpan = llmSpans.find(s => s.output_payload);
-    const output = outputSpan?.output_payload ?? event.assistant_output;
-    if (output) events.push({ type: "llm_out", content: output, time: outputSpan?.end_time_ms ?? time + 2, turnIndex: i });
-  }
-  return events;
-}
-
-/**
- * Module-level cache so reopening the Convo tab on the same convo doesn't refetch.
- * Survives unmount (component-level state would be wiped by RunDetail's tab toggle).
- * Process-lifetime; cleared on full page reload.
- */
-const cloudConvoCache = new Map<string, ConvoTurn[]>();
-
-/**
- * Lazily fetch all turns of a cloud convo and render via RemoteConvoDetail.
- * Mounted only when the Convo tab is opened (RunDetail conditionally renders it),
- * so the cloud listEvents + per-event fetchTraces calls don't run for users who
- * never open the tab. Per-event spans are cached via /api/saved-runs/cache and
- * the assembled turn list is cached in `cloudConvoCache`.
- */
-export function RemoteConvoLoader({ convoId, highlightEventId }: { convoId: string; highlightEventId: string }) {
-  const [turns, setTurns] = useState<ConvoTurn[]>(() => cloudConvoCache.get(convoId) ?? []);
-  const [loading, setLoading] = useState(() => !cloudConvoCache.has(convoId));
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (cloudConvoCache.has(convoId)) {
-      setTurns(cloudConvoCache.get(convoId)!);
-      setLoading(false);
+  const runSearch = useCallback(async (f: FilterState) => {
+    if (!isFilterActive(f)) {
+      setResponse(null);
+      setHasSearched(false);
       return;
     }
-
-    let cancelled = false;
     setLoading(true);
     setError(null);
-
-    (async () => {
-      try {
-        const res = await listEvents({ convoId, limit: 100, orderBy: "timestamp" });
-        if (cancelled) return;
-        const events = res.data;
-        if (events.length === 0) {
-          cloudConvoCache.set(convoId, []);
-          setTurns([]);
-          return;
-        }
-
-        const fetched = await Promise.all(events.map(async (event) => {
-          const cached = await fetch(`/api/saved-runs/cache/${event.id}`)
-            .then(r => r.ok ? r.json() : null)
-            .catch(() => null);
-          if (cached?.spans?.length) return { event, spans: cached.spans as Span[] };
-          try {
-            const traces = await fetchTraces(event.id);
-            const spans = mapTraceToSpans(traces, event.id);
-            fetch(`/api/saved-runs/cache/${event.id}`, {
-              method: "PUT", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ spans }),
-            }).catch(() => {});
-            return { event, spans };
-          } catch {
-            // Single-turn failure: keep the turn visible with no spans rather than failing the whole convo.
-            return { event, spans: [] as Span[] };
-          }
-        }));
-        if (!cancelled) {
-          cloudConvoCache.set(convoId, fetched);
-          setTurns(fetched);
-        }
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message ?? "Failed to load conversation");
-      } finally {
-        if (!cancelled) setLoading(false);
+    setHasSearched(true);
+    try {
+      const params = filterToParams(f);
+      params.set("limit", "100");
+      const res = await fetch(`/api/search?${params.toString()}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
       }
-    })();
-
-    return () => { cancelled = true; };
-  }, [convoId]);
-
-  if (error) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center space-y-2">
-          <AlertCircle className="mx-auto h-5 w-5" style={{ color: C.red }} />
-          <div className="text-[11px]" style={{ color: C.red }}>{error}</div>
-        </div>
-      </div>
-    );
-  }
-
-  return <RemoteConvoDetail turns={turns} loading={loading} highlightEventId={highlightEventId} />;
-}
-
-function RemoteConvoDetail({ turns, loading, highlightEventId }: { turns: ConvoTurn[]; loading: boolean; highlightEventId: string }) {
-  const [hoveredTurn, setHoveredTurn] = useState<number | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Scroll to highlighted event once loaded
-  useEffect(() => {
-    if (!loading && turns.length > 0) {
-      const el = document.getElementById(`convo-turn-${highlightEventId}`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      const data = (await res.json()) as SearchResponse;
+      setResponse(data);
+    } catch (err) {
+      setError((err as Error).message);
+      setResponse(null);
+    } finally {
+      setLoading(false);
     }
-  }, [loading, turns, highlightEventId]);
+  }, []);
 
-  const events = useMemo(() => buildRemoteConvoEvents(turns), [turns]);
+  // If route has runId, focus that run as a side preview
+  const focusedRunId = routeRunId ? decodeURIComponent(routeRunId) : null;
 
-  if (loading) return <div className="flex items-center justify-center h-full gap-2" style={{ color: C.fg1 }}>Loading <Dots /></div>;
-  if (turns.length === 0) return <div className="flex items-center justify-center h-full" style={{ color: C.fg1 }}>No runs found</div>;
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFilters(draft);
+    void runSearch(draft);
+  };
+
+  const onClear = () => {
+    setDraft(EMPTY_FILTERS);
+    setFilters(EMPTY_FILTERS);
+    setResponse(null);
+    setError(null);
+    setHasSearched(false);
+  };
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filters.q.trim()) n++;
+    if (filters.agent) n++;
+    if (filters.user) n++;
+    if (filters.project) n++;
+    if (filters.branch) n++;
+    if (filters.commit) n++;
+    if (filters.model) n++;
+    if (filters.spanName) n++;
+    if (filters.spanType) n++;
+    if (filters.hasErrors) n++;
+    if (filters.dateFrom) n++;
+    if (filters.dateTo) n++;
+    return n;
+  }, [filters]);
+
+  const groupedResults = useMemo(() => {
+    if (!response) return [] as Array<{ run_id: string; items: SearchResult[] }>;
+    const map = new Map<string, SearchResult[]>();
+    for (const r of response.results) {
+      if (!map.has(r.run_id)) map.set(r.run_id, []);
+      map.get(r.run_id)!.push(r);
+    }
+    return Array.from(map.entries()).map(([run_id, items]) => ({ run_id, items }));
+  }, [response]);
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex-shrink-0 px-4 py-3" style={{ borderBottom: `1px solid ${C.border}` }}>
-        <div className="text-[11px] font-mono inline-flex items-center gap-1.5" style={{ color: C.fg1 }}>
-          <span>conversation</span>
-          <span className="relative group inline-flex items-center">
-            <HelpCircle size={13} style={{ color: C.fg0, cursor: "help" }} />
-            <div className="absolute left-0 top-full mt-2 z-50 hidden group-hover:block">
-              <div className="rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-nowrap shadow-xl"
-                style={{ background: C.elevated, border: `1px solid ${C.borderLight}`, color: C.fg3 }}>
-                Conversation groups separate runs that share the same <span className="font-mono" style={{ color: C.fg4 }}>convo_id</span>
-              </div>
-            </div>
+    <div className="flex h-full overflow-hidden">
+      {/* Left: filters */}
+      <form
+        onSubmit={onSubmit}
+        className="flex w-80 shrink-0 flex-col overflow-y-auto border-r border-white/[0.06] bg-black/30 px-4 py-3 text-sm"
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: C.fg1 }}>
+            {t("search.title", { defaultValue: "Search" })} {activeFilterCount > 0 && `(${activeFilterCount})`}
           </span>
-          <span style={{ color: C.fg0 }}>&middot;</span>
-          <span>{turns.length} run{turns.length !== 1 ? "s" : ""}</span>
+          {isFilterActive(draft) && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] uppercase tracking-wide text-white/50 hover:bg-white/[0.05] hover:text-white/80"
+            >
+              <X className="h-3 w-3" />
+              {t("search.clearFilters", { defaultValue: "Clear" })}
+            </button>
+          )}
         </div>
-      </div>
-      <div ref={scrollRef} className="flex-1 overflow-auto sb pb-24">
-        {events.map((evt, i) => {
-          const dimmed = hoveredTurn !== null && evt.turnIndex !== hoveredTurn;
-          const isHighlightedTurn = turns[evt.turnIndex]?.event.id === highlightEventId;
 
-          if (evt.type === "turn_start") {
-            return (
-              <div key={`td${i}`} id={`convo-turn-${evt.event.id}`}
-                style={{ opacity: dimmed ? 0.35 : 1, transition: "opacity 0.15s" }}>
-                <div className="flex items-center gap-3 px-4 pt-6 pb-2">
-                  <div className="flex-1 h-px" style={{ background: isHighlightedTurn ? "rgba(91,141,239,0.3)" : "rgba(255,255,255,0.08)" }} />
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded" style={{
-                    color: isHighlightedTurn ? C.accent : C.fg1,
-                    background: isHighlightedTurn ? "rgba(91,141,239,0.1)" : "rgba(255,255,255,0.04)",
-                  }}>
-                    run {evt.turnIndex + 1}
-                  </span>
-                  <span className="text-[10px] cursor-default" style={{ color: C.fg0 }}
-                    onMouseEnter={() => setHoveredTurn(evt.turnIndex)}
-                    onMouseLeave={() => setHoveredTurn(null)}>{ago(new Date(evt.event.timestamp).getTime())}</span>
-                  {evt.event.signals && evt.event.signals.length > 0 && evt.event.signals.map(sig => (
-                    <span key={sig.id} className="text-[8px] font-mono px-1 py-px rounded-full"
-                      style={{ background: "rgba(165,124,245,0.08)", color: C.purple }}>{sig.name}</span>
-                  ))}
-                  <div className="flex-1 h-px" style={{ background: isHighlightedTurn ? "rgba(91,141,239,0.3)" : "rgba(255,255,255,0.08)" }} />
-                </div>
-              </div>
-            );
-          }
+        <Field
+          label={t("search.query", { defaultValue: "Free-text query" })}
+          hint={t("search.queryHint", { defaultValue: "FTS5 over span names, models, payloads, attributes" })}
+        >
+          <input
+            type="text"
+            value={draft.q}
+            onChange={(e) => setDraft({ ...draft, q: e.target.value })}
+            placeholder={t("search.queryPlaceholder", { defaultValue: "substring or token" })}
+            className="w-full rounded border border-white/10 bg-black/40 px-2 py-1.5 text-sm text-white/90 placeholder:text-white/35 focus:border-white/25 focus:outline-none"
+          />
+        </Field>
 
-          if (evt.type === "user_msg") {
-            return (
-              <div key={`um${i}`} style={{ opacity: dimmed ? 0.35 : 1, transition: "opacity 0.15s" }}>
-                <div className="flex justify-end px-4 pt-5 pb-1">
-                  <div className="max-w-[65%] px-3.5 py-2.5 rounded-2xl rounded-br-md" style={{ background: C.user }}>
-                    <pre className="text-sm leading-relaxed font-sans whitespace-pre-wrap" style={{ color: C.fg3 }}>
-                      {evt.content}
-                    </pre>
-                  </div>
-                </div>
-              </div>
-            );
-          }
+        <SelectField
+          label={t("search.agent", { defaultValue: "Agent (event_name)" })}
+          value={draft.agent}
+          options={facets?.agents ?? []}
+          onChange={(v) => setDraft({ ...draft, agent: v })}
+        />
+        <SelectField
+          label={t("search.user", { defaultValue: "User" })}
+          value={draft.user}
+          options={facets?.users ?? []}
+          onChange={(v) => setDraft({ ...draft, user: v })}
+        />
+        <SelectField
+          label={t("search.project", { defaultValue: "Project" })}
+          value={draft.project}
+          options={facets?.projects ?? []}
+          onChange={(v) => setDraft({ ...draft, project: v })}
+        />
+        <SelectField
+          label={t("search.branch", { defaultValue: "Branch" })}
+          value={draft.branch}
+          options={facets?.branches ?? []}
+          onChange={(v) => setDraft({ ...draft, branch: v })}
+        />
+        <Field label={t("search.commitPrefix", { defaultValue: "Commit prefix" })}>
+          <input
+            type="text"
+            value={draft.commit}
+            onChange={(e) => setDraft({ ...draft, commit: e.target.value })}
+            placeholder={t("search.commitPlaceholder", { defaultValue: "abc1234" })}
+            className="w-full rounded border border-white/10 bg-black/40 px-2 py-1.5 text-sm text-white/90 placeholder:text-white/35 focus:border-white/25 focus:outline-none"
+          />
+        </Field>
+        <SelectField
+          label={t("search.model", { defaultValue: "Model" })}
+          value={draft.model}
+          options={facets?.models ?? []}
+          onChange={(v) => setDraft({ ...draft, model: v })}
+        />
+        <SelectField
+          label={t("search.spanName", { defaultValue: "Span name" })}
+          value={draft.spanName}
+          options={facets?.spans ?? []}
+          onChange={(v) => setDraft({ ...draft, spanName: v })}
+        />
+        <SelectField
+          label={t("search.spanType", { defaultValue: "Span type" })}
+          value={draft.spanType}
+          options={SPAN_TYPES}
+          onChange={(v) => setDraft({ ...draft, spanType: v })}
+        />
 
-          if (evt.type === "llm_out") {
-            return (
-              <div key={`lo${i}`} className="max-w-[85%] px-4 py-2"
-                style={{ opacity: dimmed ? 0.35 : 1, transition: "opacity 0.15s" }}>
-                <div className="text-message leading-relaxed" style={{ color: C.fg3 }}>
-                  <Markdown>{evt.content}</Markdown>
-                </div>
-              </div>
-            );
-          }
+        <Field label={t("search.dateRange", { defaultValue: "Date range" })}>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={draft.dateFrom}
+              onChange={(e) => setDraft({ ...draft, dateFrom: e.target.value })}
+              className="flex-1 rounded border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-white/90 focus:border-white/25 focus:outline-none"
+            />
+            <span className="text-white/40 text-xs">—</span>
+            <input
+              type="date"
+              value={draft.dateTo}
+              onChange={(e) => setDraft({ ...draft, dateTo: e.target.value })}
+              className="flex-1 rounded border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-white/90 focus:border-white/25 focus:outline-none"
+            />
+          </div>
+        </Field>
 
-          return null;
-        })}
+        <label className="mb-3 mt-1 flex items-center gap-2 text-xs text-white/70">
+          <input
+            type="checkbox"
+            checked={draft.hasErrors}
+            onChange={(e) => setDraft({ ...draft, hasErrors: e.target.checked })}
+            className="h-3 w-3 rounded border-white/20 bg-black/40"
+          />
+          <span>{t("search.hasErrors", { defaultValue: "Only spans with errors" })}</span>
+        </label>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-auto inline-flex items-center justify-center gap-2 rounded bg-white/10 px-3 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/15 disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SearchIcon className="h-3.5 w-3.5" />}
+          {t("search.runSearch", { defaultValue: "Search" })}
+        </button>
+      </form>
+
+      {/* Right: results */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {!hasSearched && !focusedRunId && (
+          <div className="grid h-full place-items-center text-center text-sm" style={{ color: C.fg1 }}>
+            <div>
+              <SearchIcon className="mx-auto mb-3 h-8 w-8 opacity-30" />
+              <p>{t("search.intro", { defaultValue: "Set any combination of filters above and click Search." })}</p>
+              <p className="mt-2 text-xs opacity-70">
+                {t("search.introHint", {
+                  defaultValue: "Faceted values come from the runs table; free-text matches span names, payloads, attributes.",
+                })}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex items-center gap-2 text-sm" style={{ color: C.fg1 }}>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t("search.searching", { defaultValue: "Searching…" })}
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-2 rounded border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium">{t("search.searchFailed", { defaultValue: "Search failed" })}</p>
+              <p className="text-xs text-red-200/80">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {response && (
+          <div className="mb-3 flex items-center justify-between text-xs" style={{ color: C.fg1 }}>
+            <span>
+              {t("search.resultsCount", {
+                defaultValue: `${response.total} spans across ${groupedResults.length} runs`,
+                total: response.total,
+                runs: groupedResults.length,
+              })}
+            </span>
+            <span className="text-white/40">{t("search.bm25", { defaultValue: "ranked by BM25" })}</span>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {groupedResults.map(({ run_id, items }) => (
+            <RunGroup
+              key={run_id}
+              runId={run_id}
+              items={items}
+              onOpenRun={() => navigate(runPath(run_id))}
+            />
+          ))}
+        </div>
+
+        {focusedRunId && groupedResults.length === 0 && !loading && (
+          <p className="text-sm" style={{ color: C.fg1 }}>
+            {t("search.noResults", { defaultValue: "No matches. Try a wider set of filters." })}
+          </p>
+        )}
       </div>
     </div>
   );
+}
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-3">
+      <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-white/55">
+        {label}
+      </label>
+      {children}
+      {hint && <p className="mt-1 text-[10px] leading-snug text-white/35">{hint}</p>}
+    </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded border border-white/10 bg-black/40 px-2 py-1.5 text-sm text-white/90 focus:border-white/25 focus:outline-none"
+      >
+        <option value="">— any —</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+function RunGroup({
+  runId,
+  items,
+  onOpenRun,
+}: {
+  runId: string;
+  items: SearchResult[];
+  onOpenRun: () => void;
+}) {
+  const { t } = useT();
+  const first = items[0];
+  const agent = first?.event_name ?? null;
+  return (
+    <div className="rounded border border-white/[0.08] bg-white/[0.02] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={onOpenRun}
+          className="flex items-center gap-2 truncate font-mono text-sm text-white/90 hover:text-white"
+        >
+          <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px]">{runId.slice(0, 8)}</span>
+          {agent && <span className="text-xs text-white/60">{agent}</span>}
+          {first?.git?.branch && (
+            <span className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-mono text-white/55">
+              {first.git.branch}
+            </span>
+          )}
+        </button>
+        <span className="text-[10px] text-white/40">
+          {items.length} {t("search.matchSuffix", { defaultValue: "match" })}{items.length !== 1 ? "es" : ""}
+        </span>
+      </div>
+      <ul className="space-y-1.5">
+        {items.map((r) => (
+          <li key={r.span_id} className="flex items-baseline gap-2 text-xs">
+            <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-white/65">
+              {r.span_type ?? "?"}
+            </span>
+            <span className="font-mono text-white/80">{r.span_name}</span>
+            {r.model && <span className="text-white/40">{r.model}</span>}
+            <span
+              className="ml-auto flex-1 truncate text-right text-white/55"
+              dangerouslySetInnerHTML={{ __html: r.snippet }}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Legacy cloud-backed search payload removed in F-017. The old /v1/events/search
+// path is no longer reachable from this page. If a remote EventsPage is needed
+// in the future, see git history (commit before 4b63371).
+
+// No-op stub retained so RunDetail.tsx still imports cleanly. F-017 dropped the
+// query.raindrop.ai dependency; old RemoteConvoLoader logic was cloud-only.
+export function RemoteConvoLoader(_props: { convoId: string; highlightEventId: string }) {
+  return null;
 }
