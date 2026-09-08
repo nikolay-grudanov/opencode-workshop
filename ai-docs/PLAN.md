@@ -110,6 +110,10 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 - [x] Live smoke: chip labels and presetPrompts ids both present in built bundle (`dist/assets/index-Dtq8uCsj.js`). Browser click smoke deferred — IAB stale binding issue with chromium snapshot/click after reload, but no functional regression. Real users will see the chips as before.
 - [x] Commit + push F-015
 
+### F-016 — i18n infrastructure + Russian translation — Closed 2026-09-08
+
+(F-016 closed inline with F-017; full description preserved below.)
+
 ### F-016 — i18n infrastructure + Russian translation
 
 **Context:** Workshop UI is en-only. Kolya's stack is mixed RU/EN (commit messages, comments, sidepanel prompts). Russian-speaking agents/operators will hit the UI; today labels like "Search runs…", "Annotate", "Cancel" all stay English regardless of `navigator.language`.
@@ -139,7 +143,22 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 - [ ] Unit test: key switch under `I18nProvider language="ru"` (i18n module unit-tested implicitly via presetPrompts tests; full snapshot test deferred)
 - [x] `bun x tsc --noEmit` + `bun test tests/` (96/96) + `bun run build:ui`
 - [x] Live UI smoke: LangSwitcher buttons rendered (EN active, RU inactive on first load); nav labels translate after switch (verified up to click)
-- [ ] Commit + push F-016
+- [x] Commit + push F-016
+
+### F-017 — Local multi-filter search + sidebar cleanup — Closed 2026-09-08
+
+**Context:** The previous SearchPage routed through `query.raindrop.ai` (paid cloud Events API) — out of scope for the open-source fork. Sidebar in the Russian locale was clipping "сохранённые" because the column was too narrow. External link to raindrop.ai in the sidebar header was inappropriate for an open-source fork.
+
+**Result:** commit `0434ff6`.
+
+- **Sidebar cleanup:** dropped external Raindrop link (`<a href="https://raindrop.ai">`) from NavSidebar's header — this fork is open-source with no upstream affiliation. Widened `SIDEBAR_WIDTH` from `10rem` to `13rem` so longer Russian labels fit. Removed empty `SidebarHeader`.
+- **Search rewrite (local):** `/api/search` extended with `model`, `spanName`, `spanType`, `hasErrors`, `dateFrom`, `dateTo` filters. `computeFacets()` also returns models + distinct span names (limit 200). `searchSpans` SQL JOINed with `spans`/`live_events` when `hasErrors` is set; date range uses inclusive end-day bump.
+- **SearchPage UI:** replaced cloud-backed page with a multi-filter form. Free-text query, agent/user/project/branch drop-downs (auto-populated from `/api/facets`), commit prefix input, model/span name/span type drop-downs, has-errors checkbox, date from/to inputs. Results grouped by run_id with span-type pill, model, and FTS5 snippet. Run-detail link from each group.
+- **Removed cloud coupling:** `DaemonQueryKeyStatus` block deleted from Settings; the `query` SecretKey field is no longer surfaced in UI (kept in enum to avoid touching `secrets.ts`). `RemoteConvoLoader` retained as a no-op stub so RunDetail keeps compiling.
+
+**Verified:** `bun x tsc --noEmit` clean, `bun test tests/` 96/96 pass, `bun run build:ui` success. `GET /api/search?hasErrors=true&model=X` and `GET /api/facets` both return 200 with the new fields. End-to-end search via the new UI renders facet drop-downs and grouped result rows.
+
+**Plugin-repo impact:** NONE.
 
 ### F-012 — Collapsible Statistics panel + Convo Statistics + SpanDetail parent/children
 
