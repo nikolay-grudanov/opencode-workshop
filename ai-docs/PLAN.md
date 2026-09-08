@@ -75,32 +75,70 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 ## Active Features
 
-### F-006 — Workshop sidepanel chat: sidepanel env + plugin detection (companion to plugin F-006)
+## Roadmap (Tier 1, next-up) — 2026-09-08
 
-**Context:** The Workshop sidepanel chat (`POST /api/agent/messages`) spawns `opencode run` in the user's workspace. Upstream claude/codex bridges used `--mcp-config <json>` and `--append-system-prompt` to give the agent trace-context MCP tools and a sidepanel role. `opencode run` has neither. The plugin side (`opencode-workshop-plugin` v0.1.0-kolya.15) registers the `workshop` MCP server via its `config` hook and prepends the sidepanel system prompt via `experimental.chat.system.transform` — **gated on `RAINDROP_SIDEPANEL_ACTIVE=1` + `RAINDROP_SIDEPANEL_RUN_ID=<id>` in the child env**.
+After F-006 closed 2026-09-08. Two natural follow-ups: surface-tuning the chat panel and making the whole UI bilingual.
 
-This feature ships the workshop-side of that contract: the bridge must (a) set those env vars on every spawn, (b) detect when the user has not installed the plugin and return a clear error instead of a silent broken chat.
+- **T1-C. F-015 — Configurable sidepanel prompt chips** — The "TraceDebugPrompt" row in `MessagePane.tsx` hardcodes 3-4 prompt chips ("What went wrong here?", "What workshop tools are available?", "Annotate trace…"). Pull them into an array `presetPrompts: { id, label, prompt }[]` so new chips can be added without touching the JSX. Tie chip labels to the i18n catalog so they survive the F-016 cut.
+- **T1-D. F-016 — i18n infrastructure + Russian translation** — Workshop UI is en-only. Add react-i18next + i18next-browser-languagedetector with `I18nProvider`, `useT()` hook, autodetect from `navigator.language`, persist in `localStorage["workshop:lang"]`, lang switcher in NavSidebar. Translate: nav, runs page, settings, message pane (chips + placeholder + section titles + errors), search page, saved page, button labels, error messages. Bundled `en.json` and `ru.json`.
+
+Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
+
+---
+
+## Active Features
+
+### F-015 — Configurable sidepanel prompt chips (TraceDebugPrompt)
+
+**Context:** `MessagePane.tsx` has a `TraceDebugPrompt` row that renders 3 hardcoded chips when a run is focused and the chat is empty: "What went wrong here?", "What workshop tools are available?", "Annotate trace…". Each chip is a `<button onClick={() => sendMessage(prompt)}>`. Adding a new chip requires editing the JSX directly. Worse, chip labels are en-only — they will not survive F-016 unless extracted behind `t()`.
 
 **Plan:**
-- `src/opencode-cli-chat.ts`:
-  - `opencodeChildEnv(cwd, backendUrl, { runId, sessionId })` always exports `RAINDROP_SIDEPANEL_ACTIVE=1`, `RAINDROP_WORKSHOP_AGENT_PROVIDER=opencode`, `RAINDROP_WORKSHOP_ANNOTATION_SOURCE=opencode`, plus the focused `RAINDROP_SIDEPANEL_RUN_ID`.
-  - New `isWorkshopPluginInstalled(cwd)`: scans `<cwd>/.opencode/opencode.json{,c}` and `~/.config/opencode/opencode.json{,c}` (HOME read at call-time so tests can isolate) for any `plugin` entry that contains the substring `opencode-workshop-plugin`.
-  - `runOpencodeCliChat`: short-circuits before spawn when `isWorkshopPluginInstalled` is false. Emits `onError("Workshop sidepanel requires the opencode-workshop-plugin to be installed in this project. Run \`bunx opencode-workshop-plugin install\` in the project root, then retry.")` and returns `{ code: 1 }`.
-- Unit tests: env composition (sidepanel vars present), plugin detection (4 cases: missing file, project opencode.json with workshop plugin, project without it, user-global with workshop plugin string form), bridge short-circuit on missing plugin, bridge spawns past the gate when present (verified via mocked `RAINDROP_WORKSHOP_OPENCODE_BIN=/nonexistent-...` triggering ENOENT).
-- Verified: `bun x tsc --noEmit` clean, `bun test tests/` 87/87, `bun run build:ui` success.
+- New module `app/src/components/presetPrompts.ts` exporting `PRESET_PROMPTS: PresetPrompt[]` where `interface PresetPrompt { id: string; labelKey: string; prompt: string; }`. Default seed is the three existing chips, but labelled via i18n keys (`chat.preset.whatWentWrong`, `chat.preset.toolsAvailable`, `chat.preset.annotateTrace`).
+- `TraceDebugPrompt` becomes a thin map: `PRESET_PROMPTS.map(p => <button onClick={() => sendMessage(t(p.labelKey))}>{t(p.labelKey)}</button>)`. If `PRESET_PROMPTS` is empty, the row hides itself (already the case via the `activeRunId && messages.length === 0 && !sending` gate).
+- New optional runtime config: read `window.RAINDROP_PRESET_PROMPTS` (a JSON array of `PresetPrompt`) before render so deployers can extend without rebuilding. If absent, use the bundled `PRESET_PROMPTS`.
+- One unit test pinning the default `PRESET_PROMPTS` shape and the window-override behaviour.
 
-**Verified live (2026-09-08):** `POST /api/agent/messages` with the sidepanel env active → opencode run picks up `OPENCODE_CONFIG_DIR` → spawns `workshop` MCP server → agent invokes `workshop__get_current_run` → receives run data with `run_id` + metadata → replies with the run_id prefixed. Confirmed by `curl -X POST /api/agent/messages` against run `63e0c532` and `7397d2b0`. Chat UI MessagePane shows the assistant message with `tool_start`/`tool_finish` blocks for the MCP call.
+**Verified by tsc + lint + tests + build:ui.**
 
 **Todos:**
-- [x] Plan F-006 (this entry)
-- [x] `opencodeChildEnv` extended with sidepanel env (`RAINDROP_SIDEPANEL_ACTIVE`, `RAINDROP_SIDEPANEL_RUN_ID`, `RAINDROP_WORKSHOP_AGENT_PROVIDER`, `RAINDROP_WORKSHOP_ANNOTATION_SOURCE`, `OPENCODE_CONFIG_DIR`)
-- [x] `isWorkshopPluginInstalled` helper (HOME read at call-time so tests isolate)
-- [x] `writeSidepanelConfigDir` — bridge writes per-spawn opencode.json so the opencode run child picks up the MCP registration
-- [x] `runOpencodeCliChat` short-circuit + friendly error when plugin missing
-- [x] Unit tests for env, plugin detection, bridge short-circuit, writeSidepanelConfigDir (13 new tests in total)
-- [x] `bun x tsc --noEmit` + `bun test tests/` (90/90) + `bun run build:ui`
-- [x] Live UI smoke: sidepanel chat invokes `workshop__get_current_run` end-to-end
-- [ ] Commit + push F-006
+- [x] Plan F-015 (this entry)
+- [ ] `presetPrompts.ts` module + 3 default chips via i18n keys
+- [ ] `TraceDebugPrompt` rewritten as a map over the array
+- [ ] Optional `window.RAINDROP_PRESET_PROMPTS` runtime override
+- [ ] Unit tests
+- [ ] `bun x tsc --noEmit` + `bun test tests/` + `bun run build:ui`
+- [ ] Live UI smoke: chips still appear, click → message sent
+- [ ] Commit + push F-015
+
+### F-016 — i18n infrastructure + Russian translation
+
+**Context:** Workshop UI is en-only. Kolya's stack is mixed RU/EN (commit messages, comments, sidepanel prompts). Russian-speaking agents/operators will hit the UI; today labels like "Search runs…", "Annotate", "Cancel" all stay English regardless of `navigator.language`.
+
+**Plan:**
+- `app/package.json`: add `react-i18next` and `i18next-browser-languagedetector` deps.
+- New module `app/src/i18n/index.ts`:
+  - `initI18n(lang?)` creates an i18next instance with resources bundled as static JSON imports of `app/src/i18n/locales/{en,ru}.json`. autodetect from `navigator.language`, fall back to `en`. Persistence key `workshop:lang`.
+  - `useT()` thin hook wrapping `useTranslation()` with our default namespace.
+- `app/src/main.tsx` (or wherever the root is): wrap the tree in `<I18nProvider>`. Detect persisted language BEFORE first render to avoid flicker.
+- `app/src/components/LangSwitcher.tsx`: small EN/RU pill in `NavSidebar`.
+- Locale files: `app/src/i18n/locales/en.json` + `ru.json`. Single `translation` namespace, keys grouped by component: `nav.*`, `runs.*`, `message.*`, `search.*`, `saved.*`, `settings.*`, `errors.*`, `chat.preset.*` (also consumed by F-015).
+- Sweep every component: replace hardcoded strings with `const { t } = useTranslation(); t("nav.runs")`. Endpoints are server-rendered or already localized server-side; only UI strings need translation.
+- One snapshot test (or render test) verifying key switches when `<I18nProvider language="ru">` is wrapped around a small component.
+
+**Verified by tsc + lint + tests + build:ui + live UI toggle.**
+
+**Todos:**
+- [x] Plan F-016 (this entry)
+- [ ] Install `react-i18next`, `i18next-browser-languagedetector`
+- [ ] `i18n/index.ts` with `initI18n()`, `useT()`, persistence, autodetect
+- [ ] `<I18nProvider>` at app root + persist BEFORE first render
+- [ ] `LangSwitcher.tsx` mounted in `NavSidebar`
+- [ ] `en.json` + `ru.json` locale files
+- [ ] Sweep NavSidebar, RunsPage, MessagePane, SearchPage, SavedPage, SettingsPage, button labels, error messages — replace hardcoded strings with `t()`
+- [ ] Unit test: key switch under `I18nProvider language="ru"`
+- [ ] `bun x tsc --noEmit` + `bun test tests/` + `bun run build:ui`
+- [ ] Live UI smoke: switch to RU, all visible strings translated; reload preserves choice
+- [ ] Commit + push F-016
 
 ### F-012 — Collapsible Statistics panel + Convo Statistics + SpanDetail parent/children
 
@@ -218,6 +256,26 @@ C) **SpanDetail parent + children** (`app/src/components/SpanDetail.tsx` + `app/
 ---
 
 ## Closed Features
+
+### F-006 — Workshop sidepanel chat: sidepanel env + plugin detection (companion to plugin F-006) — Closed 2026-09-08
+
+**Context:** `POST /api/agent/messages` spawns `opencode run` in the user's workspace. Upstream claude/codex bridges used `--mcp-config <json>` and `--append-system-prompt` to give the agent trace-context MCP tools and a sidepanel role. `opencode run` has neither. The plugin side (`opencode-workshop-plugin` v0.1.0-kolya.15) registers the `workshop` MCP server via its plugin-side `OPENCODE_CONFIG_DIR` bootstrap and prepends the sidepanel system prompt via `experimental.chat.system.transform` — gated on `RAINDROP_SIDEPANEL_ACTIVE=1` + `RAINDROP_SIDEPANEL_RUN_ID=<id>` in the child env.
+
+This feature ships the workshop-side of that contract: the bridge sets those env vars on every spawn, detects when the user has not installed the plugin and returns a clear error, AND writes its own `OPENCODE_CONFIG_DIR` (the parent plugin's `process.env` mutation does not survive execve into the opencode run child).
+
+**Result (workshop-side):** workshop commits `2335892` + corresponding plugin commit `68bd80c`.
+
+- `src/opencode-cli-chat.ts`:
+  - `opencodeChildEnv(cwd, backendUrl, { runId, sessionId, sidepanelConfigDir })` always exports `RAINDROP_SIDEPANEL_ACTIVE=1`, `RAINDROP_WORKSHOP_AGENT_PROVIDER=opencode`, `RAINDROP_WORKSHOP_ANNOTATION_SOURCE=opencode`, `OPENCODE_CONFIG_DIR=<tmpdir>`, plus the focused `RAINDROP_SIDEPANEL_RUN_ID`.
+  - `isWorkshopPluginInstalled(cwd)`: scans `<cwd>/.opencode/opencode.json{,c}` and `~/.config/opencode/opencode.json{,c}` (HOME read at call-time so tests isolate) for any `plugin` entry that contains the substring `opencode-workshop-plugin`.
+  - `writeSidepanelConfigDir(input)`: writes `~/.cache/workshop-sidepanel/<pid>-<ts>/opencode.json` with the stdio MCP server registration. Sweeps stale entries (mtime > 1h). Strips `/v1/` suffix from `RAINDROP_WORKSHOP_URL`. Returns the dir path or `null` on failure.
+  - `runOpencodeCliChat`: short-circuits before spawn when `isWorkshopPluginInstalled` is false, emits friendly error, returns `{ code: 1 }`. Passes `sidepanelConfigDir` through spawn env.
+- `src/server.ts`: `/api/agent/messages` wires the bridge end-to-end with local origin guard.
+- `tests/opencode-cli-chat.test.ts`: 13 new tests covering env composition, plugin detection (4 cases), bridge short-circuit, writeSidepanelConfigDir (returns null / writes valid config / strips /v1/).
+
+**Verification:** `bun x tsc --noEmit` clean, `bun test tests/` 90/90 pass, `bun run build:ui` success. Live end-to-end `curl -X POST /api/agent/messages` returns `text:"F006_BRIDGE_OK 7397d2b00f12adf89bb160615fc5619c"` with `tool_start`/`tool_finish` events for `workshop__get_current_run`.
+
+**Companion plugin (separate repo):** `opencode-workshop-plugin` v0.1.0-kolya.15, commit `68bd80c`.
 
 ### F-005 — Self-contained HTML session export — Closed 2026-07-21
 
