@@ -27,6 +27,7 @@ import {
   setAgentProvider,
   type AgentProviderId,
 } from "./agent-chat";
+import { runOpencodeCliChat } from "./opencode-cli-chat";
 import { loadInstallRegistry } from "./install/registry";
 import {
   ACTIVE_WORKSPACE_MISSING_MESSAGE,
@@ -1294,30 +1295,94 @@ export async function createServer(port: number) {
 
   app.post("/api/agent/messages", localOriginGuard, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const { content, client_message_id } = body;
+    const { content, session_id, run_id, client_message_id } = body;
     if (typeof content !== "string" || !content.trim()) {
       res.status(400).json({ error: "content required" });
       return;
     }
-    if (!cwdFromRequestOrActive(req, res)) return;
+    if (session_id != null && typeof session_id !== "string") {
+      res.status(400).json({ error: "session_id must be a string" });
+      return;
+    }
     const requestProvider = agentProvider;
+    const cwd = cwdFromRequestOrActive(req, res);
+    if (!cwd) return;
+
+    let providerSessionId = typeof session_id === "string" && session_id ? session_id : null;
     const clientMessageId = typeof client_message_id === "string" && client_message_id
       ? client_message_id
       : randomUUID();
-    const unsupported = `Workshop no longer ships a built-in ${agentProviderLabel(requestProvider)} CLI runner.`;
-    broadcast("agent_message_stream", {
-      client_message_id: clientMessageId,
-      session_id: null,
-      provider: requestProvider,
-      event: { type: "error", content: unsupported },
-    });
-    res.status(501).json({
-      error: unsupported,
-      client_message_id: clientMessageId,
-      session_id: null,
-      events: [],
-      text: "",
-    });
+    let text = "";
+    let errorText = "";
+    const events: unknown[] = [];
+    const broadcastStreamEvent = (event: unknown) => {
+      broadcast("agent_message_stream", {
+        client_message_id: clientMessageId,
+        session_id: providerSessionId,
+        provider: requestProvider,
+        event,
+      });
+    };
+    try {
+      const result = await runOpencodeCliChat(
+        {
+          backendUrl: `http://localhost:${port}`,
+          content,
+          cwd,
+          runId: typeof run_id === "string" ? run_id : null,
+          resumeSessionId: providerSessionId,
+        },
+        {
+          onEvent(event) {
+            events.push(event);
+            broadcastStreamEvent(event);
+          },
+          onProviderSession(sessionId) {
+            providerSessionId = sessionId;
+            broadcastStreamEvent({ type: "provider_session", sessionId });
+          },
+          onText(nextContent) {
+            text = nextContent;
+            broadcastStreamEvent({ type: "text", content: nextContent });
+          },
+          onStatus() {},
+          onError(nextContent) {
+            errorText = nextContent;
+            broadcastStreamEvent({ type: "error", content: nextContent });
+          },
+        },
+      );
+      if (result.code !== 0 || errorText) {
+        const detail = errorText
+          || (/(?:not found|ENOENT)/i.test(result.stderr) && result.stderr.trim())
+          || result.stderr.trim().split("\n").slice(-3).join("\n")
+          || `${agentProviderLabel(requestProvider)} exited with code ${result.code ?? "unknown"}`;
+        res.status(502).json({
+          error: detail,
+          client_message_id: clientMessageId,
+          session_id: providerSessionId,
+          events,
+        });
+        return;
+      }
+      broadcastStreamEvent({ type: "done" });
+      res.json({
+        client_message_id: clientMessageId,
+        session_id: providerSessionId,
+        text,
+        events,
+      });
+    } catch (err) {
+      const message = /ENOENT/.test((err as Error).message)
+        ? "OpenCode CLI (opencode) not found on PATH. Install it or set RAINDROP_WORKSHOP_OPENCODE_BIN."
+        : (err as Error).message || "OpenCode chat failed";
+      res.status(500).json({
+        error: message,
+        client_message_id: clientMessageId,
+        session_id: providerSessionId,
+        events,
+      });
+    }
   });
 
   app.get("/api/providers/status", (_req, res) => {

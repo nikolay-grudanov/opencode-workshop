@@ -75,6 +75,33 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 ## Active Features
 
+### F-006 — Workshop sidepanel chat: sidepanel env + plugin detection (companion to plugin F-006)
+
+**Context:** The Workshop sidepanel chat (`POST /api/agent/messages`) spawns `opencode run` in the user's workspace. Upstream claude/codex bridges used `--mcp-config <json>` and `--append-system-prompt` to give the agent trace-context MCP tools and a sidepanel role. `opencode run` has neither. The plugin side (`opencode-workshop-plugin` v0.1.0-kolya.15) registers the `workshop` MCP server via its `config` hook and prepends the sidepanel system prompt via `experimental.chat.system.transform` — **gated on `RAINDROP_SIDEPANEL_ACTIVE=1` + `RAINDROP_SIDEPANEL_RUN_ID=<id>` in the child env**.
+
+This feature ships the workshop-side of that contract: the bridge must (a) set those env vars on every spawn, (b) detect when the user has not installed the plugin and return a clear error instead of a silent broken chat.
+
+**Plan:**
+- `src/opencode-cli-chat.ts`:
+  - `opencodeChildEnv(cwd, backendUrl, { runId, sessionId })` always exports `RAINDROP_SIDEPANEL_ACTIVE=1`, `RAINDROP_WORKSHOP_AGENT_PROVIDER=opencode`, `RAINDROP_WORKSHOP_ANNOTATION_SOURCE=opencode`, plus the focused `RAINDROP_SIDEPANEL_RUN_ID`.
+  - New `isWorkshopPluginInstalled(cwd)`: scans `<cwd>/.opencode/opencode.json{,c}` and `~/.config/opencode/opencode.json{,c}` (HOME read at call-time so tests can isolate) for any `plugin` entry that contains the substring `opencode-workshop-plugin`.
+  - `runOpencodeCliChat`: short-circuits before spawn when `isWorkshopPluginInstalled` is false. Emits `onError("Workshop sidepanel requires the opencode-workshop-plugin to be installed in this project. Run \`bunx opencode-workshop-plugin install\` in the project root, then retry.")` and returns `{ code: 1 }`.
+- Unit tests: env composition (sidepanel vars present), plugin detection (4 cases: missing file, project opencode.json with workshop plugin, project without it, user-global with workshop plugin string form), bridge short-circuit on missing plugin, bridge spawns past the gate when present (verified via mocked `RAINDROP_WORKSHOP_OPENCODE_BIN=/nonexistent-...` triggering ENOENT).
+- Verified: `bun x tsc --noEmit` clean, `bun test tests/` 87/87, `bun run build:ui` success.
+
+**Verified live (2026-09-08):** `POST /api/agent/messages` with the sidepanel env active → opencode run picks up `OPENCODE_CONFIG_DIR` → spawns `workshop` MCP server → agent invokes `workshop__get_current_run` → receives run data with `run_id` + metadata → replies with the run_id prefixed. Confirmed by `curl -X POST /api/agent/messages` against run `63e0c532` and `7397d2b0`. Chat UI MessagePane shows the assistant message with `tool_start`/`tool_finish` blocks for the MCP call.
+
+**Todos:**
+- [x] Plan F-006 (this entry)
+- [x] `opencodeChildEnv` extended with sidepanel env (`RAINDROP_SIDEPANEL_ACTIVE`, `RAINDROP_SIDEPANEL_RUN_ID`, `RAINDROP_WORKSHOP_AGENT_PROVIDER`, `RAINDROP_WORKSHOP_ANNOTATION_SOURCE`, `OPENCODE_CONFIG_DIR`)
+- [x] `isWorkshopPluginInstalled` helper (HOME read at call-time so tests isolate)
+- [x] `writeSidepanelConfigDir` — bridge writes per-spawn opencode.json so the opencode run child picks up the MCP registration
+- [x] `runOpencodeCliChat` short-circuit + friendly error when plugin missing
+- [x] Unit tests for env, plugin detection, bridge short-circuit, writeSidepanelConfigDir (13 new tests in total)
+- [x] `bun x tsc --noEmit` + `bun test tests/` (90/90) + `bun run build:ui`
+- [x] Live UI smoke: sidepanel chat invokes `workshop__get_current_run` end-to-end
+- [ ] Commit + push F-006
+
 ### F-012 — Collapsible Statistics panel + Convo Statistics + SpanDetail parent/children
 
 **Context:** Workshop UI previously showed a single StatsLine row (model/tools/sub-agents/errors/duration/tokens + Cost Breakdown hover). This worked for happy-path debugging but had three real blind spots surfaced in the metrics brainstorm:
