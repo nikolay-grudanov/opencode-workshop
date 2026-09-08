@@ -28,6 +28,7 @@ import { parseReplayMetadata } from "../utils/types";
 import type { Run, Span, LiveEvent, SubAgent } from "../utils/types";
 import { saveEvent, removeSavedEvent, updateSavedEvent, isEventSaved, getSavedEvents, SavePopover, type SavedAnnotationPreview, type SavedEvent } from "../pages/SavedPage";
 import { parseMessages } from "./MessageList";
+import { StatsTable, StatsRow, StatsLabel, StatsValue, StatsCaption } from "./StatsTable";
 import { AnnotationCreatePopover, TraceAnnotations } from "./TraceAnnotations";
 import { useAnnotations } from "../hooks/use-annotations";
 import type { Annotation, AnnotationKind } from "../hooks/use-annotations";
@@ -274,95 +275,108 @@ function StatsPanel({ stats, spans, model }: {
 
   return (
     <div
-      className="mt-2 rounded-lg p-3 space-y-3"
+      className="mt-2 rounded-lg p-3"
       style={{ background: "rgba(255,255,255,0.025)", border: `1px solid ${C.border}` }}
     >
       {/* Data-quality disclaimers */}
-      <div>
-        <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Coverage</div>
-        <div className="text-[11px] space-y-0.5" style={{ color: C.fg0 }}>
-          <div>spans: <span className="font-mono" style={{ color: C.fg2 }}>{spans.length}</span>
-            {" "}(LLM <span className="font-mono">{llmSpans.length}</span>, tools <span className="font-mono">{toolSpans.length}</span>)
-          </div>
-          <div>token counts: <span className="font-mono" style={{ color: C.fg2 }}>{tokenSpans.length}/{spans.length}</span> spans
-            <span style={{ color: C.fg0, opacity: 0.7 }}> ({stats.inTokens != null ? "summed in StatsLine" : "not aggregated"})</span>
-          </div>
-          <div>end_time populated: <span className="font-mono" style={{ color: C.fg2 }}>{endTimeSpans.length}/{spans.length}</span> spans
-            <span style={{ color: C.fg0, opacity: 0.7 }}> (N/{spans.length} open means duration split is approximate)</span>
-          </div>
+      <StatsCaption first>Coverage</StatsCaption>
+      <StatsTable>
+        <tbody>
+          <StatsRow>
+            <StatsLabel>spans</StatsLabel>
+            <StatsValue>{spans.length} · LLM {llmSpans.length} · tools {toolSpans.length}</StatsValue>
+          </StatsRow>
+          <StatsRow>
+            <StatsLabel>token counts</StatsLabel>
+            <StatsValue>{tokenSpans.length}/{spans.length} spans</StatsValue>
+          </StatsRow>
+          <StatsRow>
+            <StatsLabel>end_time populated</StatsLabel>
+            <StatsValue>{endTimeSpans.length}/{spans.length} spans</StatsValue>
+          </StatsRow>
           {errorSpans.length > 0 && (
-            <div style={{ color: C.red }}>ERROR spans: <span className="font-mono">{errorSpans.length}</span></div>
+            <StatsRow>
+              <StatsLabel>ERROR spans</StatsLabel>
+              <StatsValue color={C.red}>{errorSpans.length}</StatsValue>
+            </StatsRow>
           )}
-        </div>
-      </div>
+          <StatsRow last>
+            <td className="py-[5px] text-[10px] leading-snug" style={{ color: C.fg0 }} colSpan={2}>
+              {stats.inTokens != null ? "Token totals are summed in StatsLine." : "Token totals not aggregated."}
+              {" "}Open spans (no end_time) make the duration split approximate.
+            </td>
+          </StatsRow>
+        </tbody>
+      </StatsTable>
 
       {/* Top-5 slowest spans */}
       {topSlow.length > 0 && (
-        <div>
-          <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Top slowest spans</div>
-          <table className="w-full text-[11px]">
+        <>
+          <StatsCaption>Top slowest spans</StatsCaption>
+          <StatsTable>
             <tbody>
-              {topSlow.map(s => (
-                <tr key={s.id}>
-                  <td className="font-mono truncate pr-2 max-w-[260px]" style={{ color: C.fg2 }} title={s.name}>{s.name}</td>
-                  <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg1 }}>{fmt(s.duration_ms)}</td>
-                </tr>
+              {topSlow.map((s, i) => (
+                <StatsRow key={s.id} last={i === topSlow.length - 1}>
+                  <StatsLabel title={s.name}>{s.name}</StatsLabel>
+                  <StatsValue>{fmt(s.duration_ms)}</StatsValue>
+                </StatsRow>
               ))}
             </tbody>
-          </table>
-        </div>
+          </StatsTable>
+        </>
       )}
 
       {/* Top-5 token-drains (LLM only) */}
       {topTokens.length > 0 && (
-        <div>
-          <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Top token-drains (LLM)</div>
-          <table className="w-full text-[11px]">
+        <>
+          <StatsCaption>Top token-drains (LLM)</StatsCaption>
+          <StatsTable>
             <tbody>
-              {topTokens.map(s => (
-                <tr key={s.id}>
-                  <td className="font-mono truncate pr-2 max-w-[260px]" style={{ color: C.fg2 }} title={s.model ?? s.name}>{s.model ?? s.name}</td>
-                  <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg1 }}>
-                    {((s.input_tokens ?? 0) + (s.output_tokens ?? 0)).toLocaleString()}
-                  </td>
-                </tr>
+              {topTokens.map((s, i) => (
+                <StatsRow key={s.id} last={i === topTokens.length - 1}>
+                  <StatsLabel title={s.model ?? s.name}>{s.model ?? s.name}</StatsLabel>
+                  <StatsValue>{((s.input_tokens ?? 0) + (s.output_tokens ?? 0)).toLocaleString()}</StatsValue>
+                </StatsRow>
               ))}
             </tbody>
-          </table>
-        </div>
+          </StatsTable>
+        </>
       )}
 
       {/* Top-5 costliest models */}
       {topModels.length > 0 && (
-        <div>
-          <div className="text-[9px] uppercase tracking-wide font-medium mb-1.5" style={{ color: C.fg1 }}>Top costliest models</div>
-          <table className="w-full text-[11px]">
+        <>
+          <StatsCaption>Top costliest models</StatsCaption>
+          <StatsTable>
             <tbody>
-              {topModels.map(({ model: m, inTok, outTok, cost }) => (
-                <tr key={m}>
-                  <td className="font-mono truncate pr-2 max-w-[220px]" style={{ color: C.fg2 }} title={m}>{m}</td>
-                  <td className="font-mono text-right whitespace-nowrap pr-2" style={{ color: C.fg1 }}>{(inTok + outTok).toLocaleString()}</td>
-                  <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg2 }}>{cost > 0 ? fmtCost(cost) : "—"}</td>
-                </tr>
+              {topModels.map(({ model: m, inTok, outTok, cost }, i) => (
+                <StatsRow key={m} last={i === topModels.length - 1}>
+                  <StatsLabel title={m} max={220}>{m}</StatsLabel>
+                  <StatsValue className="pr-4">{(inTok + outTok).toLocaleString()}</StatsValue>
+                  <StatsValue color={cost > 0 ? undefined : C.fg1}>{cost > 0 ? fmtCost(cost) : "—"}</StatsValue>
+                </StatsRow>
               ))}
             </tbody>
-          </table>
-        </div>
+          </StatsTable>
+        </>
       )}
     </div>
   );
 }
 
-function StatsLine({ stats, model, spans, active, startedAt }: {
+function StatsLine({ stats, model, spans, active, startedAt, expanded: expandedProp, onToggleExpanded }: {
   stats: { spans: number; tools: number; llms: number; errors: number; dur: number; agents?: number; inTokens?: number; outTokens?: number };
   model?: string | null;
   spans?: Span[];
   active?: boolean;
   startedAt?: number;
+  expanded?: boolean;
+  onToggleExpanded?: (expanded: boolean) => void;
 }) {
   const [showCost, setShowCost] = useState(false);
   const costRef = useRef<HTMLSpanElement>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const expanded = expandedProp ?? internalExpanded;
   const inTok = stats.inTokens ?? 0;
   const outTok = stats.outTokens ?? 0;
 
@@ -388,8 +402,7 @@ function StatsLine({ stats, model, spans, active, startedAt }: {
   const durRemSec = durSec % 60;
 
   return (
-    <div>
-      <div className="flex items-center gap-1.5 text-[11px] flex-wrap" style={{ color: C.fg1 }}>
+    <div className="flex items-center gap-1.5 text-[11px] flex-wrap" style={{ color: C.fg1 }}>
         {model && <><Badge label="model" copyValue={model} /><span>{model}</span><Dot /></>}
         {stats.tools > 0 && <><span><NumberFlow value={stats.tools} /> tool{stats.tools !== 1 ? "s" : ""}</span><Dot /></>}
         {(stats.agents ?? 0) > 0 && <><span><NumberFlow value={stats.agents!} /> sub-agent{stats.agents !== 1 ? "s" : ""}</span><Dot /></>}
@@ -442,7 +455,10 @@ function StatsLine({ stats, model, spans, active, startedAt }: {
             <Dot />
             <button
               type="button"
-              onClick={() => setExpanded(v => !v)}
+              onClick={() => {
+                if (onToggleExpanded) onToggleExpanded(!expanded);
+                else setInternalExpanded(v => !v);
+              }}
               className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 rounded transition-colors hover:bg-white/10"
               style={{ color: expanded ? C.fg4 : C.fg1, background: expanded ? "rgba(255,255,255,0.06)" : "transparent" }}
               title="Toggle detailed statistics panel"
@@ -455,8 +471,6 @@ function StatsLine({ stats, model, spans, active, startedAt }: {
             </button>
           </>
         )}
-      </div>
-      {spans && expanded && <StatsPanel stats={stats} spans={spans} model={model ?? null} />}
     </div>
   );
 }
@@ -646,6 +660,7 @@ function ViewHeader({
   const saveBtnRef = useRef<HTMLButtonElement>(null);
   const [annotationPopoverOpen, setAnnotationPopoverOpen] = useState(false);
   const annotationBtnRef = useRef<HTMLButtonElement>(null);
+  const [statsExpanded, setStatsExpanded] = useState(false);
   useEffect(() => {
     const refresh = () => {
       setIsSaved(run ? isEventSaved(run.id) : false);
@@ -728,17 +743,21 @@ function ViewHeader({
                   {active ? "Active" : "Done"}
                 </span>
               </div>
-              <StatsLine stats={stats} model={model} spans={allSpans} active={active} startedAt={startedAt} />
+              <StatsLine stats={stats} model={model} spans={allSpans} active={active} startedAt={startedAt} expanded={statsExpanded} onToggleExpanded={setStatsExpanded} />
+              {allSpans && statsExpanded && <StatsPanel stats={stats} spans={allSpans} model={model ?? null} />}
             </div>
           </div>
         </>
       ) : isReplay ? (
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[12px] font-medium" style={{ color: C.fg3 }}>{displayTitle}</span>
-            {model && <span className="text-[10px] px-1.5 py-0.5 rounded font-mono" style={{ background: "rgba(255,255,255,0.04)", color: C.fg0 }}>{model}</span>}
-            <span style={{ color: C.fg0, opacity: 0.4 }}>|</span>
-            <StatsLine stats={stats} model={model} spans={allSpans} active={active} startedAt={startedAt} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[12px] font-medium" style={{ color: C.fg3 }}>{displayTitle}</span>
+              {model && <span className="text-[10px] px-1.5 py-0.5 rounded font-mono" style={{ background: "rgba(255,255,255,0.04)", color: C.fg0 }}>{model}</span>}
+              <span style={{ color: C.fg0, opacity: 0.4 }}>|</span>
+              <StatsLine stats={stats} model={model} spans={allSpans} active={active} startedAt={startedAt} expanded={statsExpanded} onToggleExpanded={setStatsExpanded} />
+            </div>
+            {allSpans && statsExpanded && <StatsPanel stats={stats} spans={allSpans} model={model ?? null} />}
           </div>
           <MoreMenu runId={run?.id} deleteRedirectPath={deleteRedirectPath} />
         </div>
@@ -951,18 +970,21 @@ function ViewHeader({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
-            <StatsLine stats={stats} model={model} spans={allSpans} active={active} startedAt={startedAt} />
-            {run && (run.id || run.user_id || run.convo_id) && (
-              <>
-                <Dot />
-                <span className="flex items-center gap-1.5" style={{ color: C.fg1 }}>
-                  {run.user_id && <span className="inline-flex items-center gap-1" title={run.user_id}><Badge label="user" copyValue={run.user_id} />{run.user_id.length > 12 ? run.user_id.slice(0, 12) + "…" : run.user_id}</span>}
-                  {run.convo_id && <span className="inline-flex items-center gap-1" title={run.convo_id}><Badge label="convo" copyValue={run.convo_id} />{run.convo_id.length > 12 ? run.convo_id.slice(0, 12) + "…" : run.convo_id}</span>}
-                  <span className="inline-flex items-center gap-1" title={run.id}><Badge label="trace" copyValue={run.id} />{run.id.slice(0, 8)}</span>
-                </span>
-              </>
-            )}
+          <div>
+            <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
+              <StatsLine stats={stats} model={model} spans={allSpans} active={active} startedAt={startedAt} expanded={statsExpanded} onToggleExpanded={setStatsExpanded} />
+              {run && (run.id || run.user_id || run.convo_id) && (
+                <>
+                  <Dot />
+                  <span className="flex items-center gap-1.5" style={{ color: C.fg1 }}>
+                    {run.user_id && <span className="inline-flex items-center gap-1" title={run.user_id}><Badge label="user" copyValue={run.user_id} />{run.user_id.length > 12 ? run.user_id.slice(0, 12) + "…" : run.user_id}</span>}
+                    {run.convo_id && <span className="inline-flex items-center gap-1" title={run.convo_id}><Badge label="convo" copyValue={run.convo_id} />{run.convo_id.length > 12 ? run.convo_id.slice(0, 12) + "…" : run.convo_id}</span>}
+                    <span className="inline-flex items-center gap-1" title={run.id}><Badge label="trace" copyValue={run.id} />{run.id.slice(0, 8)}</span>
+                  </span>
+                </>
+              )}
+            </div>
+            {allSpans && statsExpanded && <StatsPanel stats={stats} spans={allSpans} model={model ?? null} />}
           </div>
         </>
       )}

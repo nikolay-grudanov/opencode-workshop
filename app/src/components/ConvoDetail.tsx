@@ -11,6 +11,7 @@ import { buildConvoEvents } from "./convo-events";
 import { useWorkshopEvent } from "../hooks/use-workshop-ws";
 import { useConversationDetail } from "../hooks/use-runs";
 import { useConvoStatistics } from "../hooks/use-convo-statistics";
+import { StatsTable, StatsRow, StatsLabel, StatsValue, StatsCaption } from "./StatsTable";
 
 /**
  * F-012: cross-run Convo Statistics panel. Shows total wall-clock, span and
@@ -78,76 +79,86 @@ function ConvoStatsPanel({ convoId }: { convoId: string }) {
       </button>
 
       {expanded && (
-        <div className="px-3 pb-3 pt-1 space-y-2">
+        <div className="px-3 pb-3 pt-1">
           {noData ? (
             <div className="text-[11px]" style={{ color: C.fg0 }}>
               No spans available for this conversation.
             </div>
           ) : (
-            <>
-              {/* Totals grid */}
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono">
-                <div style={{ color: C.fg0 }}>duration</div>
-                <div style={{ color: C.fg2 }}>{fmt(s.wall_clock_ms)}</div>
-                <div style={{ color: C.fg0 }}>LLM calls</div>
-                <div style={{ color: C.fg2 }}>{s.llm_span_count}</div>
-                <div style={{ color: C.fg0 }}>tool calls</div>
-                <div style={{ color: C.fg2 }}>{s.tool_span_count}</div>
-                <div style={{ color: C.fg0 }}>sub-agents</div>
-                <div style={{ color: C.fg2 }}>{s.subagent_count}</div>
-                <div style={{ color: C.fg0 }}>errors</div>
-                <div style={{ color: errColor }}>{errors}</div>
-              </div>
-
-              {/* Tokens (with disclaimer) */}
-              <div className="rounded p-2 text-[11px]" style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${C.border}` }}>
-                <div className="flex items-center gap-2 font-mono mb-1">
-                  <span style={{ color: C.fg0 }}>tokens</span>
-                  <span style={{ color: C.fg2 }}>{s.tokens.in.toLocaleString()} in</span>
-                  <span style={{ color: C.fg0, opacity: 0.4 }}>/</span>
-                  <span style={{ color: C.fg2 }}>{s.tokens.out.toLocaleString()} out</span>
-                </div>
-                <div style={{ color: C.fg0, opacity: 0.8 }}>
-                  covered: {s.span_with_tokens}/{s.span_count} spans ({tokenPct}%).
-                  {tokenPct < 100 && " Totals undercount spans that didn't report tokens."}
-                </div>
-              </div>
+            <div>
+              {/* Totals + tokens as one ruled table */}
+              <StatsTable>
+                <tbody>
+                  <StatsRow>
+                    <StatsLabel>duration</StatsLabel>
+                    <StatsValue>{fmt(s.wall_clock_ms)}</StatsValue>
+                  </StatsRow>
+                  <StatsRow>
+                    <StatsLabel>LLM calls</StatsLabel>
+                    <StatsValue>{s.llm_span_count}</StatsValue>
+                  </StatsRow>
+                  <StatsRow>
+                    <StatsLabel>tool calls</StatsLabel>
+                    <StatsValue>{s.tool_span_count}</StatsValue>
+                  </StatsRow>
+                  <StatsRow>
+                    <StatsLabel>sub-agents</StatsLabel>
+                    <StatsValue>{s.subagent_count}</StatsValue>
+                  </StatsRow>
+                  <StatsRow>
+                    <StatsLabel>errors</StatsLabel>
+                    <StatsValue color={errColor}>{errors}</StatsValue>
+                  </StatsRow>
+                  <StatsRow>
+                    <StatsLabel>tokens</StatsLabel>
+                    <StatsValue>
+                      {s.tokens.in.toLocaleString()} in <span style={{ color: C.fg0 }}>/</span> {s.tokens.out.toLocaleString()} out
+                    </StatsValue>
+                  </StatsRow>
+                  <StatsRow last>
+                    <td className="py-[5px] text-[10px] leading-snug" style={{ color: C.fg0 }} colSpan={2}>
+                      covered: {s.span_with_tokens}/{s.span_count} spans ({tokenPct}%).
+                      {tokenPct < 100 && " Totals undercount spans that didn't report tokens."}
+                    </td>
+                  </StatsRow>
+                </tbody>
+              </StatsTable>
 
               {/* Per-model rollup */}
               {s.by_model.length > 0 && (
-                <div>
-                  <div className="text-[9px] uppercase tracking-wide font-medium mb-1" style={{ color: C.fg1 }}>By model</div>
-                  <table className="w-full text-[11px]">
+                <>
+                  <StatsCaption>By model</StatsCaption>
+                  <StatsTable>
                     <tbody>
-                      {s.by_model.map(m => (
-                        <tr key={m.model}>
-                          <td className="font-mono truncate pr-2 max-w-[220px]" style={{ color: C.fg2 }} title={m.model}>{m.model}</td>
-                          <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg1 }}>{(m.in + m.out).toLocaleString()}</td>
-                        </tr>
+                      {s.by_model.map((m, i) => (
+                        <StatsRow key={m.model} last={i === s.by_model.length - 1}>
+                          <StatsLabel title={m.model} max={220}>{m.model}</StatsLabel>
+                          <StatsValue>{(m.in + m.out).toLocaleString()}</StatsValue>
+                        </StatsRow>
                       ))}
                     </tbody>
-                  </table>
-                </div>
+                  </StatsTable>
+                </>
               )}
 
               {/* Per-run rollup */}
               {s.runs.length > 0 && (
-                <div>
-                  <div className="text-[9px] uppercase tracking-wide font-medium mb-1" style={{ color: C.fg1 }}>Per-run</div>
-                  <table className="w-full text-[11px]">
+                <>
+                  <StatsCaption>Per-run</StatsCaption>
+                  <StatsTable>
                     <tbody>
-                      {s.runs.map(r => (
-                        <tr key={r.id}>
-                          <td className="font-mono truncate pr-2 max-w-[180px]" style={{ color: C.fg2 }} title={r.event_name ?? r.id}>{r.event_name ?? r.id}</td>
-                          <td className="font-mono text-right whitespace-nowrap pr-2" style={{ color: C.fg1 }}>{fmt(r.wall_clock_ms)}</td>
-                          <td className="font-mono text-right whitespace-nowrap" style={{ color: C.fg1 }}>{(r.tokens.in + r.tokens.out).toLocaleString()}</td>
-                        </tr>
+                      {s.runs.map((r, i) => (
+                        <StatsRow key={r.id} last={i === s.runs.length - 1}>
+                          <StatsLabel title={r.event_name ?? r.id} max={180}>{r.event_name ?? r.id}</StatsLabel>
+                          <StatsValue className="pr-4">{fmt(r.wall_clock_ms)}</StatsValue>
+                          <StatsValue>{(r.tokens.in + r.tokens.out).toLocaleString()}</StatsValue>
+                        </StatsRow>
                       ))}
                     </tbody>
-                  </table>
-                </div>
+                  </StatsTable>
+                </>
               )}
-            </>
+            </div>
           )}
         </div>
       )}

@@ -100,6 +100,8 @@ C) **SpanDetail parent + children** (`app/src/components/SpanDetail.tsx` + `app/
 
 **Commit:** `f0cadd3`. Companion plugin commit `5d2907b` (F-013) is a hard prerequisite — without it, StatsPanel's coverage disclaimer would still say "end_time populated: 8/16" instead of "16/16".
 
+**Post-close UI polish (2026-09-08):** both stats panels (RunDetail StatsPanel + ConvoDetail ConvoStatsPanel) rewritten onto shared `app/src/components/StatsTable.tsx` primitives — label left / value right, high-contrast white row dividers, boxed tokens block removed. StatsPanel moved out of `StatsLine` (expanded state lifted to the header) and now renders full-width below the header row, fixing the reflow artifact where USER/CONVO/TRACE chips slid left when expanding.
+
 **Todos:**
 - [x] Plan F-012 (this entry)
 - [x] Add `StatsPanel` component + "stats show/hide" toggle in `RunDetail.tsx`
