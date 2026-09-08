@@ -102,11 +102,11 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 **Todos:**
 - [x] Plan F-015 (this entry)
-- [ ] `presetPrompts.ts` module + 3 default chips via i18n keys
-- [ ] `TraceDebugPrompt` rewritten as a map over the array
-- [ ] Optional `window.RAINDROP_PRESET_PROMPTS` runtime override
-- [ ] Unit tests
-- [ ] `bun x tsc --noEmit` + `bun test tests/` + `bun run build:ui`
+- [x] `presetPrompts.ts` module + 3 default chips via i18n keys
+- [x] `TraceDebugPrompt` rewritten as a map over the array
+- [x] Optional `window.RAINDROP_PRESET_PROMPTS` runtime override
+- [x] Unit tests (6 cases: defaults, valid override, malformed items, empty, non-array, identity keys)
+- [x] `bun x tsc --noEmit` + `bun test tests/` (96/96) + `bun run build:ui`
 - [ ] Live UI smoke: chips still appear, click → message sent
 - [ ] Commit + push F-015
 

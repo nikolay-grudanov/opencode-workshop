@@ -7,6 +7,7 @@ import { runPath } from "../utils/navigation";
 import { isAgentProvider, providerLabel, type AgentProviderId } from "../utils/agent-provider";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { Markdown } from "./Markdown";
+import { resolvePresetPrompts } from "./presetPrompts";
 import { RaindropLogo } from "./RaindropLogo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -1813,17 +1814,21 @@ function copyTextWithTextarea(text: string): boolean {
 }
 
 function TraceDebugPrompt({ onPrompt }: { onPrompt: (prompt: string) => void }) {
-  const prompts = ["What went wrong here?", "What workshop tools are available?", "Annotate trace, save it for later"];
+  // F-015: data-driven prompt chips. Labels are i18n keys (resolved via the
+  // `t()` shim if i18next is mounted, else returned as-is for now). Override
+  // at runtime via `window.RAINDROP_PRESET_PROMPTS = [{id,labelKey,prompt}, ...]`.
+  const prompts = resolvePresetPrompts();
+  const t = (key: string) => (typeof window === "undefined" ? key : window.__workshopT?.(key) ?? key);
   return (
     <div className="mb-2 flex gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
-      {prompts.map((prompt) => (
+      {prompts.map((p) => (
         <button
-          key={prompt}
+          key={p.id}
           type="button"
-          onClick={() => onPrompt(prompt)}
+          onClick={() => onPrompt(p.prompt)}
           className="min-h-8 shrink-0 rounded-[6px] border border-white/10 bg-black/20 px-2.5 py-1 text-left text-xs text-white/60 shadow-[0_6px_18px_rgba(0,0,0,0.14)] transition-[transform,background-color,border-color,color] hover:border-white/20 hover:bg-white/[0.06] hover:text-white/85 active:scale-[0.96]"
         >
-          {prompt}
+          {t(p.labelKey)}
         </button>
       ))}
     </div>
