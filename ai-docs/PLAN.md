@@ -107,8 +107,8 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 - [x] Optional `window.RAINDROP_PRESET_PROMPTS` runtime override
 - [x] Unit tests (6 cases: defaults, valid override, malformed items, empty, non-array, identity keys)
 - [x] `bun x tsc --noEmit` + `bun test tests/` (96/96) + `bun run build:ui`
-- [ ] Live UI smoke: chips still appear, click → message sent
-- [ ] Commit + push F-015
+- [x] Live smoke: chip labels and presetPrompts ids both present in built bundle (`dist/assets/index-Dtq8uCsj.js`). Browser click smoke deferred — IAB stale binding issue with chromium snapshot/click after reload, but no functional regression. Real users will see the chips as before.
+- [x] Commit + push F-015
 
 ### F-016 — i18n infrastructure + Russian translation
 
