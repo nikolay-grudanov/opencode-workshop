@@ -12,14 +12,16 @@ import {
 } from "@/components/ui/sidebar";
 import { Activity, Bookmark, Search, Settings } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useT } from "../i18n";
+import { LangSwitcher } from "./LangSwitcher";
 import { RaindropLogo } from "./RaindropLogo";
 
 export type Page = "runs" | "search" | "saved" | "settings";
 
-const NAV_ITEMS: { id: Page; label: string; path: string; icon: typeof Activity }[] = [
-  { id: "runs", label: "runs", path: "/runs", icon: Activity },
-  { id: "search", label: "search", path: "/search", icon: Search },
-  { id: "saved", label: "saved", path: "/saved", icon: Bookmark },
+const NAV_ITEMS: { id: Page; labelKey: string; path: string; icon: typeof Activity }[] = [
+  { id: "runs", labelKey: "nav.runs", path: "/runs", icon: Activity },
+  { id: "search", labelKey: "nav.search", path: "/search", icon: Search },
+  { id: "saved", labelKey: "nav.saved", path: "/saved", icon: Bookmark },
 ];
 
 const WORKSHOP_LOGO_URL = `${__RAINDROP_ASSETS_BASE_URL__}/assets/workshop/${encodeURIComponent(__RAINDROP_VERSION__)}/logo.svg`;
@@ -33,6 +35,7 @@ function NavSidebarInner() {
   const expanded = state === "expanded";
   const location = useLocation();
   const navigate = useNavigate();
+  const { t } = useT();
   const onSettings = location.pathname === "/settings";
 
   return (
@@ -79,7 +82,9 @@ function NavSidebarInner() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV_ITEMS.map(({ id, label, path, icon: Icon }) => (
+              {NAV_ITEMS.map(({ id, labelKey, path, icon: Icon }) => {
+                const label = t(labelKey);
+                return (
                 <SidebarMenuItem key={id}>
                   {(() => {
                     const active = isNavPathActive(location.pathname, path);
@@ -104,16 +109,17 @@ function NavSidebarInner() {
                     );
                   })()}
                 </SidebarMenuItem>
-              ))}
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="p-2 space-y-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              tooltip="settings"
+              tooltip={t("nav.settings")}
               isActive={onSettings}
               onClick={() => navigate(onSettings ? "/runs" : "/settings")}
               size="sm"
@@ -124,11 +130,12 @@ function NavSidebarInner() {
               <span
                 className={`text-[11px] transition-opacity duration-150 ${onSettings ? "opacity-100" : "opacity-45 group-hover/menu-item:opacity-80"}`}
               >
-                settings
+                {t("nav.settings")}
               </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <LangSwitcher />
       </SidebarFooter>
     </Sidebar>
   );

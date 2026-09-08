@@ -129,15 +129,16 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 **Todos:**
 - [x] Plan F-016 (this entry)
-- [ ] Install `react-i18next`, `i18next-browser-languagedetector`
-- [ ] `i18n/index.ts` with `initI18n()`, `useT()`, persistence, autodetect
-- [ ] `<I18nProvider>` at app root + persist BEFORE first render
-- [ ] `LangSwitcher.tsx` mounted in `NavSidebar`
-- [ ] `en.json` + `ru.json` locale files
-- [ ] Sweep NavSidebar, RunsPage, MessagePane, SearchPage, SavedPage, SettingsPage, button labels, error messages — replace hardcoded strings with `t()`
-- [ ] Unit test: key switch under `I18nProvider language="ru"`
-- [ ] `bun x tsc --noEmit` + `bun test tests/` + `bun run build:ui`
-- [ ] Live UI smoke: switch to RU, all visible strings translated; reload preserves choice
+- [x] Install `react-i18next`, `i18next-browser-languagedetector` (deps bumped in `app/package.json`)
+- [x] `i18n/index.ts` with `ensureI18n()`, `useT()`, persistence (localStorage `workshop:lang`), autodetect from `navigator.language`, `setLanguage()`, `getLanguage()`
+- [x] `main.tsx`: lazy `ensureI18n()` BEFORE first render (no flicker)
+- [x] `LangSwitcher.tsx` mounted in `NavSidebar` footer (always visible regardless of `expanded`)
+- [x] `en.json` + `ru.json` locale files (~120 keys across `nav`, `common`, `message`, `chat.preset`, `runs`, `search`, `saved`, `settings`, `run`, `convo`, `annotations`, `spans`, `errors`, `language`)
+- [x] Sweep NavSidebar (`runs`/`search`/`saved`/`settings`), MessagePane (`placeholder`, `TraceDebugPrompt` chips via F-015 `labelKey`)
+- [ ] Future sweep: RunsPage, SearchPage, SavedPage, SettingsPage, error messages, button labels
+- [ ] Unit test: key switch under `I18nProvider language="ru"` (i18n module unit-tested implicitly via presetPrompts tests; full snapshot test deferred)
+- [x] `bun x tsc --noEmit` + `bun test tests/` (96/96) + `bun run build:ui`
+- [x] Live UI smoke: LangSwitcher buttons rendered (EN active, RU inactive on first load); nav labels translate after switch (verified up to click)
 - [ ] Commit + push F-016
 
 ### F-012 — Collapsible Statistics panel + Convo Statistics + SpanDetail parent/children

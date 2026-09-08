@@ -10,6 +10,7 @@ import { Markdown } from "./Markdown";
 import { resolvePresetPrompts } from "./presetPrompts";
 import { RaindropLogo } from "./RaindropLogo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { useT } from "../i18n";
 
 type Role = "user" | "assistant";
 
@@ -186,6 +187,7 @@ interface MessagePaneProps {
 }
 
 export function MessagePane({ activeRunId }: MessagePaneProps) {
+  const { t } = useT();
   const [collapsed, setCollapsedState] = useState<boolean>(loadCollapsed);
   const [width, setWidth] = useState<number>(loadWidth);
   const [sessions, setSessions] = useState<ClaudeSessionSummary[]>([]);
@@ -981,7 +983,7 @@ export function MessagePane({ activeRunId }: MessagePaneProps) {
                     void sendMessage();
                   }
                 }}
-                placeholder={activeRunId ? "Ask about this trace..." : `Ask ${providerLabel(provider)}...`}
+                placeholder={activeRunId ? t("message.askAboutTrace") : t("message.askProvider", { providerLabel: providerLabel(provider) })}
                 rows={2}
                 aria-expanded={showSlash}
                 aria-controls="claude-slash-menu"
@@ -1814,11 +1816,11 @@ function copyTextWithTextarea(text: string): boolean {
 }
 
 function TraceDebugPrompt({ onPrompt }: { onPrompt: (prompt: string) => void }) {
-  // F-015: data-driven prompt chips. Labels are i18n keys (resolved via the
-  // `t()` shim if i18next is mounted, else returned as-is for now). Override
-  // at runtime via `window.RAINDROP_PRESET_PROMPTS = [{id,labelKey,prompt}, ...]`.
+  // F-015: data-driven prompt chips. Labels resolve through the i18n hook
+  // (F-016). Override at runtime via
+  // `window.RAINDROP_PRESET_PROMPTS = [{id,labelKey,prompt}, ...]`.
   const prompts = resolvePresetPrompts();
-  const t = (key: string) => (typeof window === "undefined" ? key : window.__workshopT?.(key) ?? key);
+  const { t } = useT();
   return (
     <div className="mb-2 flex gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
       {prompts.map((p) => (
