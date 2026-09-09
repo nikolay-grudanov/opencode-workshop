@@ -7,7 +7,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import { Activity, Bookmark, Search, Settings } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
@@ -27,13 +26,6 @@ function isNavPathActive(pathname: string, path: string): boolean {
 }
 
 function NavSidebarInner() {
-  const { state, setOpen, openMobile, isMobile } = useSidebar();
-  // Used to expand the sidebar when the user hovers/clicks the lang switcher
-  // so the EN/RU labels fit.
-  const activate = () => {
-    if (isMobile) openMobile();
-    else setOpen(true);
-  };
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useT();
@@ -98,7 +90,7 @@ function NavSidebarInner() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <LangSwitcher onActivate={activate} />
+        <LangSwitcher />
       </SidebarFooter>
     </Sidebar>
   );

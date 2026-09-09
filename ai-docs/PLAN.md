@@ -26,6 +26,25 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 ## Active Features
 
+### F-018 — LangSwitcher UX: globe-only rail button + flyout locale menu
+
+**Context:** F-016's pill (`🌐 ru / en`) ignored the collapsed sidebar: in the 48px icon rail the locale text overflowed. Worse, hovering the pill called `setOpen(true)` — the *persisted* sidebar state (cookie `sidebar_state`, 7 days TTL) — so a single accidental hover expanded the rail to 15rem permanently, and nothing ever collapsed it back.
+
+**Result:**
+- `app/src/components/LangSwitcher.tsx` — globe-only icon button sized like the other rail icons; locales live in a small flyout menu anchored above the button. Opens on click or hover (120ms intent delay); closes on mouse-leave (250ms grace), Escape, outside pointerdown, or focus leaving the widget. Languages are endonyms ("English" / "Русский") with a check on the active one (W3C i18n guidance); the `ru / en` codes on the button are gone. Flyout is absolutely positioned (no portal) — the sidebar container has no `overflow-hidden`, so the menu escapes the collapsed rail.
+- `app/src/components/NavSidebar.tsx` — hover-expansion wiring removed (`useSidebar`/`activate`/`onActivate` deleted); the sidebar never changes width for the switcher, so the "won't shrink back" bug is structurally impossible.
+
+**Verified:** root `bun x tsc --noEmit` clean; `bun run lint` 0 errors (3 pre-existing warnings); `bun test tests/` 96/96; `bun run build:ui` ok. Live smoke in IAB on :5899: collapsed rail renders the globe-only button (empty text, `data-state="collapsed"` preserved); click opens the menu with English/Русский; switching to EN re-renders nav on the fly and back to RU; sidebar stays collapsed through all interactions; outside click dismisses the menu. Screenshots not captured (IAB screenshot surface timeout after reload — known quirk since F-015); visual check = hover the globe. Note: `cd app && tsc --noEmit` is broken independently of this change (pre-existing dual-@types/react conflict, 639 error lines before it too); root tsc remains the gate.
+
+**Plugin-repo impact:** NONE.
+
+**Todos:**
+- [x] Rewrite LangSwitcher as globe-only button + flyout menu
+- [x] Remove hover-expansion wiring from NavSidebar
+- [x] tsc + lint + tests + build:ui
+- [x] Live smoke in IAB (click path verified; hover path drives the same open state)
+- [x] Commit (2026-09-09, Kolya approved; push awaits his word)
+
 ### F-008 — SQLite FTS5 full-text search across spans
 
 **Status:** P1 storage layer implemented locally; P2 search API next.
