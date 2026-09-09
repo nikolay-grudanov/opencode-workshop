@@ -416,8 +416,14 @@ export interface SearchSpanOpts {
 
 export function searchSpans(query: string, opts: SearchSpanOpts = {}) {
   const match = sanitizeFtsQuery(query);
+  const useFts = !!match;
   const filters: Array<string> = [];
   const filterParams: string[] = [];
+  // model/spanName/spanType live on spans_fts in the MATCH path and on spans
+  // in the filter-only path (no MATCH → no snippet()/bm25(), plain scan).
+  const modelCol = useFts ? "spans_fts.model" : "spans.model";
+  const spanNameCol = useFts ? "spans_fts.span_name" : "spans.name";
+  const spanTypeCol = useFts ? "spans_fts.span_type" : "spans.span_type";
   if (opts.agent) { filters.push("runs.event_name = ?"); filterParams.push(opts.agent); }
   if (opts.user) { filters.push("runs.user_id = ?"); filterParams.push(opts.user); }
   if (opts.project || opts.branch || opts.commit) {
@@ -427,9 +433,9 @@ export function searchSpans(query: string, opts: SearchSpanOpts = {}) {
     if (opts.commit) { gitParts.push("json_extract(runs.metadata, '$.git.commit') LIKE ?"); filterParams.push(`%${opts.commit}%`); }
     if (gitParts.length) filters.push("(" + gitParts.join(" AND ") + ")");
   }
-  if (opts.model) { filters.push("spans_fts.model = ?"); filterParams.push(opts.model); }
-  if (opts.spanName) { filters.push("spans_fts.span_name = ?"); filterParams.push(opts.spanName); }
-  if (opts.spanType) { filters.push("spans_fts.span_type = ?"); filterParams.push(opts.spanType); }
+  if (opts.model) { filters.push(`${modelCol} = ?`); filterParams.push(opts.model); }
+  if (opts.spanName) { filters.push(`${spanNameCol} = ?`); filterParams.push(opts.spanName); }
+  if (opts.spanType) { filters.push(`${spanTypeCol} = ?`); filterParams.push(opts.spanType); }
   if (opts.hasErrors) {
     // A span has errors if its status is ERROR or any joined live_event flagged it.
     filters.push("(spans.status = 'ERROR' OR EXISTS (SELECT 1 FROM live_events le WHERE le.trace_id = spans.run_id AND le.type = 'error'))");
@@ -451,26 +457,44 @@ export function searchSpans(query: string, opts: SearchSpanOpts = {}) {
     }
   }
   const filterClause = filters.length ? " AND " + filters.join(" AND ") : "";
-  // `hasErrors` references both `spans` and `live_events`; expose the joins
-  // unconditionally so the column list stays stable.
-  const fromClause = opts.hasErrors
-    ? `FROM spans_fts JOIN runs ON runs.id = spans_fts.run_id LEFT JOIN spans ON spans.id = spans_fts.span_id`
-    : `FROM spans_fts JOIN runs ON runs.id = spans_fts.run_id`;
   const safeLimit = Math.max(1, Math.min(200, Math.floor(opts.limit ?? 50)));
   const safeOffset = Math.max(0, Math.floor(opts.offset ?? 0));
   const db = getDrizzleDb().$client;
-  if (!match) {
+  // Nothing to search: no text and no filters.
+  if (!useFts && !filters.length) {
     return { query: query.trim(), total: 0, results: [], agents: [], users: [], projects: [], branches: [], models: [], spans: [] };
   }
-  const total = db.query(`SELECT COUNT(*) AS count ${fromClause} WHERE spans_fts MATCH ?${filterClause}`)
-    .get(match, ...filterParams) as { count: number };
-  const results = db.query(`SELECT spans_fts.span_id, spans_fts.run_id, spans_fts.span_name, spans_fts.span_type, spans_fts.model,
-    snippet(spans_fts, 6, '<mark>', '</mark>', '…', 32) AS snippet,
-    bm25(spans_fts) AS bm25,
-    runs.event_name AS event_name, runs.user_id AS user_id, json_extract(runs.metadata, '$.git') AS git
-    ${fromClause} WHERE spans_fts MATCH ?${filterClause}
-    ORDER BY bm25(spans_fts), spans_fts.span_id LIMIT ? OFFSET ?`)
-    .all(match, ...filterParams, safeLimit, safeOffset) as Array<Record<string, unknown>>;
+
+  let total: { count: number };
+  let results: Array<Record<string, unknown>>;
+  if (useFts) {
+    // `hasErrors` references both `spans` and `live_events`; expose the join
+    // unconditionally so the column list stays stable.
+    const fromClause = opts.hasErrors
+      ? `FROM spans_fts JOIN runs ON runs.id = spans_fts.run_id LEFT JOIN spans ON spans.id = spans_fts.span_id`
+      : `FROM spans_fts JOIN runs ON runs.id = spans_fts.run_id`;
+    total = db.query(`SELECT COUNT(*) AS count ${fromClause} WHERE spans_fts MATCH ?${filterClause}`)
+      .get(match, ...filterParams) as { count: number };
+    results = db.query(`SELECT spans_fts.span_id, spans_fts.run_id, spans_fts.span_name, spans_fts.span_type, spans_fts.model,
+      snippet(spans_fts, 6, '<mark>', '</mark>', '…', 32) AS snippet,
+      bm25(spans_fts) AS bm25,
+      runs.event_name AS event_name, runs.user_id AS user_id, json_extract(runs.metadata, '$.git') AS git
+      ${fromClause} WHERE spans_fts MATCH ?${filterClause}
+      ORDER BY bm25(spans_fts), spans_fts.span_id LIMIT ? OFFSET ?`)
+      .all(match, ...filterParams, safeLimit, safeOffset) as Array<Record<string, unknown>>;
+  } else {
+    // Filter-only search: plain scan over spans; snippet is unavailable
+    // without MATCH, results ranked by recency instead of BM25.
+    const fromClause = `FROM spans JOIN runs ON runs.id = spans.run_id`;
+    total = db.query(`SELECT COUNT(*) AS count ${fromClause} WHERE 1=1${filterClause}`)
+      .get(...filterParams) as { count: number };
+    results = db.query(`SELECT spans.id AS span_id, spans.run_id AS run_id, spans.name AS span_name, spans.span_type AS span_type, spans.model AS model,
+      '' AS snippet, 0 AS bm25,
+      runs.event_name AS event_name, runs.user_id AS user_id, json_extract(runs.metadata, '$.git') AS git
+      ${fromClause} WHERE 1=1${filterClause}
+      ORDER BY spans.start_time_ms DESC, spans.id LIMIT ? OFFSET ?`)
+      .all(...filterParams, safeLimit, safeOffset) as Array<Record<string, unknown>>;
+  }
   const safeResults = results.map((row) => ({
     span_id: String(row.span_id),
     run_id: String(row.run_id),

@@ -54,4 +54,47 @@ describe("searchSpans filters", () => {
     expect(facets.projects).toContain("opencode-workshop");
     expect(facets.branches).toContain("main");
   });
+
+  test("filters by model", () => {
+    expect(searchSpans("hydration", { model: "MiniMax-M3" }).total).toBe(1);
+    expect(searchSpans("hydration", { model: "NoSuchModel" }).total).toBe(0);
+  });
+});
+
+describe("searchSpans filter-only (empty q)", () => {
+  test("agent filter matches without free-text", () => {
+    const result = searchSpans("", { agent: "code-agent" });
+    expect(result.total).toBe(1);
+    expect(result.results[0].span_id).toBe("search-span");
+    expect(result.results[0].event_name).toBe("code-agent");
+    expect(searchSpans("", { agent: "no-such-agent" }).total).toBe(0);
+  });
+
+  test("span name / type / model filters work without free-text", () => {
+    expect(searchSpans("", { spanName: "think_think" }).total).toBe(1);
+    expect(searchSpans("", { spanType: "TOOL_CALL" }).total).toBe(1);
+    // spans_fts-only rows (no `spans` counterpart) are invisible to the
+    // filter-only scan — model filter matches search-span, not other-span.
+    expect(searchSpans("", { model: "MiniMax-M3" }).total).toBe(1);
+    expect(searchSpans("", { model: "NoSuchModel" }).total).toBe(0);
+  });
+
+  test("hasErrors filter works without free-text", () => {
+    insertSpan({ id: "err-span", run_id: "search-run", name: "bash", span_type: "TOOL_CALL", model: "MiniMax-M3", status: "ERROR", input_payload: "boom", output_payload: "", start_time_ms: 2, end_time_ms: 3, duration_ms: 1 });
+    expect(searchSpans("", { hasErrors: true }).total).toBe(1);
+    expect(searchSpans("", { hasErrors: true, spanName: "bash" }).total).toBe(1);
+    expect(searchSpans("", { hasErrors: true, spanName: "think_think" }).total).toBe(0);
+  });
+
+  test("date range filter works without free-text", () => {
+    const result = searchSpans("", { agent: "code-agent", dateFrom: "1970-01-01", dateTo: "1970-01-02" });
+    expect(result.total).toBe(2);
+    // recency order: err-span (start_time_ms=2) before search-span (1)
+    expect(result.results[0].span_id).toBe("err-span");
+    expect(result.results[1].span_id).toBe("search-span");
+  });
+
+  test("empty query and no filters still returns empty", () => {
+    expect(searchSpans("").total).toBe(0);
+  });
 });

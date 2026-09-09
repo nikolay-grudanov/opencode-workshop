@@ -26,6 +26,22 @@ Handoff for a future session that picks this up: `HANDOFF-NEXT-SESSION.md`.
 
 ## Active Features
 
+### F-019 — Bugfix: filter-only search always returned 0 results
+
+**Context:** After F-017's multi-filter SearchPage, any search without free-text (agent=f014-test, model=X, has-errors, …) showed "0 spans across 0 runs". `searchSpans()` short-circuited to an empty result whenever `sanitizeFtsQuery(q)` produced no MATCH tokens — a leftover guard from F-008 when `q` was the only input — silently ignoring all active filters. Facets listed the agents and the runs existed, yet every filter-only query came back empty.
+
+**Result:** `src/db.ts` `searchSpans()` now has two code paths. With a text query: unchanged FTS5 path (MATCH + snippet + BM25). Without text but with filters: a plain scan over `spans JOIN runs` (snippet/bm25 require MATCH, so the filter-only path returns an empty snippet and ranks by `spans.start_time_ms DESC`), with model/spanName/spanType filters remapped from `spans_fts.*` to `spans.*` columns. Empty query + no filters still returns empty (and the route still 400s on a bare request).
+
+**Verified:** 5 new filter-only regression tests in `tests/search-api.test.ts` (agent; spanName/spanType/model; hasErrors; date range + recency order; empty query + no filters), `bun test tests/` 102/102; root tsc + lint clean. Live daemon (hot-reloaded): `?agent=f014-test` → 1, `?agent=opencode_session` → 513, `?q=bash` → 77 (unchanged), `?q=bash&agent=opencode_session` → 73, bare → 400. UI (IAB): agent=f014-test → "1 spans across 1 runs"; free-text bash → "77 spans across 34 runs" with highlighted snippets.
+
+**Plugin-repo impact:** NONE.
+
+**Todos:**
+- [x] Fix searchSpans filter-only path
+- [x] Regression tests + full suite green
+- [x] Live verification (API + UI)
+- [x] Commit + push (2026-09-09, Kolya approved)
+
 ### F-018 — LangSwitcher UX: globe-only rail button + flyout locale menu
 
 **Context:** F-016's pill (`🌐 ru / en`) ignored the collapsed sidebar: in the 48px icon rail the locale text overflowed. Worse, hovering the pill called `setOpen(true)` — the *persisted* sidebar state (cookie `sidebar_state`, 7 days TTL) — so a single accidental hover expanded the rail to 15rem permanently, and nothing ever collapsed it back.
