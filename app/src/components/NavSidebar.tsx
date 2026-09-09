@@ -27,8 +27,13 @@ function isNavPathActive(pathname: string, path: string): boolean {
 }
 
 function NavSidebarInner() {
-  const { state } = useSidebar();
-  const expanded = state === "expanded";
+  const { state, setOpen, openMobile, isMobile } = useSidebar();
+  // Used to expand the sidebar when the user hovers/clicks the lang switcher
+  // so the EN/RU labels fit.
+  const activate = () => {
+    if (isMobile) openMobile();
+    else setOpen(true);
+  };
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useT();
@@ -93,7 +98,7 @@ function NavSidebarInner() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <LangSwitcher />
+        <LangSwitcher onActivate={activate} />
       </SidebarFooter>
     </Sidebar>
   );
